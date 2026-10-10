@@ -15,7 +15,17 @@ import {
   moneyLabel,
 } from "../src/components/game-ui";
 import { colors, fonts, makeStyles } from "../src/theme";
-import { useAbandon, useChoice, useGameState, useProfile, type Flags, type Save } from "../src/use-game";
+import {
+  useAbandon,
+  useBackgrounds,
+  useChoice,
+  useGameState,
+  useProfile,
+  useSupernatural,
+  useTransform,
+  type Flags,
+  type Save,
+} from "../src/use-game";
 
 const STAGE: Record<string, string> = {
   infant: "Infant",
@@ -78,9 +88,43 @@ const useStyles = makeStyles((palette) => ({
     marginBottom: 6,
   },
   note: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, marginTop: 6 },
+
+  chips: { flexDirection: "row", gap: 8, paddingVertical: 8 },
+  chip: {
+    borderColor: palette.line,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: palette.surface,
+  },
+  chipOn: { borderColor: palette.accent },
+  chipText: { color: palette.text, fontFamily: fonts.ui, fontSize: 15 },
+  powers: { gap: 10, marginTop: 12 },
 }));
 
 const StyleSheetAbsolute = { position: "absolute" as const, left: 0, right: 0, top: 0, bottom: 0 };
+
+const POWERS: { id: string; label: string }[] = [
+  { id: "feed", label: "Feed" },
+  { id: "lay_low", label: "Lay low" },
+  { id: "seek_clan", label: "Seek the clan" },
+];
+
+function bloodlineNotes(held: string[], walking: string): string[] {
+  const notes: string[] = [];
+  if (walking === "vampire" || held.includes("vampire")) {
+    notes.push(walking === "vampire" ? "You walk the Thirst." : "The Thirst is open.");
+  }
+  const waiting = held.filter((item) => item !== "vampire");
+  if (waiting.length) notes.push(`Bloodlines held, not yet walked: ${waiting.join(", ")}`);
+  if (!notes.length) notes.push("No bloodline is held.");
+  return notes;
+}
+
+function clanSlug(clan: string): string {
+  return clan.toLowerCase().replace(/\s+/g, "-");
+}
 
 export default function GameScreen() {
   const styles = useStyles();
@@ -89,11 +133,20 @@ export default function GameScreen() {
   const profile = useProfile();
   const choice = useChoice();
   const abandon = useAbandon();
+  const turn = useTransform();
+  const power = useSupernatural();
+  const backgrounds = useBackgrounds();
   const lifeRef = useRef<BottomSheetModal>(null);
   const abandonRef = useRef<BottomSheetModal>(null);
+  const powersRef = useRef<BottomSheetModal>(null);
   const snaps = useMemo(() => ["78%"], []);
   const [toast, setToast] = useState<string | null>(null);
+  const [clan, setClan] = useState("");
   const save = state.data?.save;
+  const clans = backgrounds.data?.vampire_clans ?? [];
+  const chosenClan = clan || clans[0] || "";
+  const held = profile.data?.profile.unlocks.species ?? [];
+  const holdsThirst = held.includes("vampire");
 
   useEffect(() => {
     if (!state.isSuccess || state.isFetching) return;
@@ -109,6 +162,29 @@ export default function GameScreen() {
     } catch (error) {
       void hapticError();
       setToast(error instanceof ApiError ? error.message : "The year did not resolve.");
+    }
+  }
+
+  async function takeBlood() {
+    setToast(null);
+    try {
+      await turn.mutateAsync(chosenClan);
+      powersRef.current?.dismiss();
+    } catch (error) {
+      void hapticError();
+      setToast(error instanceof ApiError ? error.message : "The blood did not take.");
+    }
+  }
+
+  async function spendPower(action: string) {
+    setToast(null);
+    try {
+      const result = await power.mutateAsync(action);
+      setToast(result.outcome);
+      if (!result.save.alive) router.replace("/heir");
+    } catch (error) {
+      void hapticError();
+      setToast(error instanceof ApiError ? error.message : "The night did not answer.");
     }
   }
 
@@ -132,6 +208,10 @@ export default function GameScreen() {
       </Screen>
     );
   }
+
+  const isVampire = save.character.species === "vampire";
+  const vampire = isVampire ? save.character.species_data : null;
+  const powerSpent = vampire?.last_power_age === save.character.age_years;
 
   return (
     <Screen testID="game-screen">
@@ -163,6 +243,9 @@ export default function GameScreen() {
         <GhostButton fill testID="open-life-sheet" label="Life" onPress={() => lifeRef.current?.present()} />
         <GhostButton fill testID="open-lineage-button" label="Family" onPress={() => router.push("/lineage")} />
         <GhostButton fill testID="open-store-button" label="Marks" onPress={() => router.push("/store")} />
+        {isVampire || holdsThirst ? (
+          <GhostButton fill testID="open-powers-sheet" label="Powers" onPress={() => powersRef.current?.present()} />
+        ) : null}
       </View>
       {choice.isPending ? (
         <View testID="year-passing" style={styles.passing}>
@@ -203,11 +286,11 @@ export default function GameScreen() {
               ? `Keepsakes: ${profile.data.profile.unlocks.cosmetics.join(", ")}`
               : "No keepsakes."}
           </Text>
-          <Text style={styles.note}>
-            {profile.data?.profile.unlocks.species.length
-              ? `Bloodlines held, not yet walked: ${profile.data.profile.unlocks.species.join(", ")}`
-              : "No bloodline is held."}
-          </Text>
+          {bloodlineNotes(held, save.character.species).map((line) => (
+            <Text key={line} style={styles.note}>
+              {line}
+            </Text>
+          ))}
           <View style={{ height: 18 }} />
           <GhostButton
             testID="abandon-life-button"
@@ -237,6 +320,74 @@ export default function GameScreen() {
           />
         </View>
       </BottomSheetModal>
+      <BottomSheetModal
+        ref={powersRef}
+        snapPoints={snaps}
+        backgroundStyle={{ backgroundColor: colors.surface }}
+        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+      >
+        <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="powers-sheet">
+          <Text style={styles.sheetTitle}>{isVampire ? "The Thirst" : "Powers"}</Text>
+          {vampire ? (
+            <>
+              <Text style={styles.note}>{vampire.clan}</Text>
+              <View style={styles.meters}>
+                <Meter label="Bloodlust" value={vampire.bloodlust} />
+                <Meter label="Masquerade" value={vampire.masquerade} />
+                <Meter label="Hunter heat" value={save.character.hunter_heat} />
+              </View>
+              <Text style={styles.section}>THIS YEAR</Text>
+              {powerSpent ? <Text style={styles.note}>This year's power is spent.</Text> : null}
+              <View style={styles.powers}>
+                {POWERS.map((item) => (
+                  <GhostButton
+                    key={item.id}
+                    testID={`power-${item.id.replace(/_/g, "-")}`}
+                    label={power.isPending ? "..." : item.label}
+                    disabled={power.isPending || powerSpent}
+                    onPress={() => void spendPower(item.id)}
+                  />
+                ))}
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={styles.note}>
+                {save.character.age_years >= 13
+                  ? "The blood will take, if you ask it."
+                  : "The change waits until thirteen."}
+              </Text>
+              {save.character.age_years >= 13 ? (
+                <>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+                    {clans.map((item) => {
+                      const selected = item === chosenClan;
+                      return (
+                        <Pressable
+                          key={item}
+                          testID={`power-clan-${clanSlug(item)}`}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected }}
+                          onPress={() => setClan(item)}
+                          style={[styles.chip, selected ? styles.chipOn : null]}
+                        >
+                          <Text style={styles.chipText}>{item}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                  <PrimaryButton
+                    testID="transform-vampire-button"
+                    label={turn.isPending ? "Turning..." : "Take the blood"}
+                    disabled={turn.isPending}
+                    onPress={() => void takeBlood()}
+                  />
+                </>
+              ) : null}
+            </>
+          )}
+        </BottomSheetScrollView>
+      </BottomSheetModal>
     </Screen>
   );
 }
@@ -252,6 +403,9 @@ function Header({ save }: { save: Save }) {
       </View>
       <Text style={styles.meta}>
         Age {save.character.age_years} · {stage} · Generation {save.generation}
+        {save.character.species === "vampire" && save.character.species_data
+          ? ` · ${save.character.species_data.clan}`
+          : ""}
       </Text>
     </>
   );

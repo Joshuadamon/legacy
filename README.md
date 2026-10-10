@@ -39,7 +39,7 @@ From `frontend`, `npm run lint` is `tsc --noEmit`.
 
 - Birth to death, personality flags, paths, heirs, lineage, save migration
 - Legacy Marks: 250 to start, a grant on death, a store of career, skill, cosmetic, lifestyle, and supernatural packs
-- Owned skill packs change the living character once per life. Career packs open fields in the year prompt. Supernatural packs are kept on the profile for a later birth; they do not change the body yet
+- Owned skill packs change the living character once per life. Career packs open fields in the year prompt. The Thirst is playable: a vampire birth, or a turn after thirteen, with hunger that can draw hunters. Lycanthrope and witch packs stay on the profile and do not change the body yet
 
 ## Next
 

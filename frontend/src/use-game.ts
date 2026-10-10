@@ -41,6 +41,14 @@ export type Choice = {
   fatal?: boolean;
   child_born?: boolean;
   child_name?: string;
+  species_effects?: { bloodlust?: number; masquerade?: number; hunter_heat?: number };
+};
+
+export type VampireData = {
+  clan: string;
+  bloodlust: number;
+  masquerade: number;
+  last_power_age: number | null;
 };
 
 export type GameEvent = { title: string; narrative: string; choices: Choice[] };
@@ -60,7 +68,8 @@ export type Character = {
   career: Career;
   business: Business;
   species: string;
-  species_data: unknown;
+  species_data: VampireData | null;
+  hunter_heat: number;
   applied_grants: string[];
 };
 
@@ -88,6 +97,7 @@ export type Save = {
   history: HistoryYear[];
   lineage: LineageEntry[];
   marks_earned: number;
+  true_death: boolean;
 };
 
 export type Profile = {
@@ -122,7 +132,8 @@ export function useBackgrounds() {
   const { status } = useAuth();
   return useQuery({
     queryKey: ["game", "backgrounds"],
-    queryFn: () => api<{ backgrounds: { key: string; label: string; blurb: string }[] }>("/api/game/backgrounds"),
+    queryFn: () =>
+      api<{ backgrounds: { key: string; label: string; blurb: string }[]; vampire_clans: string[] }>("/api/game/backgrounds"),
     enabled: status === "user",
   });
 }
@@ -172,7 +183,7 @@ export function useNewGame() {
   const refresh = useInvalidateLife();
   const client = useGameClient();
   return useMutation({
-    mutationFn: (body: { name: string; background_key: string }) =>
+    mutationFn: (body: { name: string; background_key: string; species?: string; clan?: string }) =>
       api<{ save: Save }>("/api/game/new", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: async (data) => {
       client.setQueryData(["game", "state"], data);
@@ -206,6 +217,27 @@ export function useAbandon() {
   const refresh = useInvalidateLife();
   return useMutation({
     mutationFn: () => api<{ ok: boolean }>("/api/game/abandon", { method: "POST" }),
+    onSuccess: refresh,
+  });
+}
+
+export function useTransform() {
+  const refresh = useInvalidateLife();
+  return useMutation({
+    mutationFn: (clan: string) =>
+      api<{ save: Save }>("/api/game/transform", { method: "POST", body: JSON.stringify({ clan }) }),
+    onSuccess: refresh,
+  });
+}
+
+export function useSupernatural() {
+  const refresh = useInvalidateLife();
+  return useMutation({
+    mutationFn: (action: string) =>
+      api<{ save: Save; outcome: string }>("/api/game/supernatural", {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      }),
     onSuccess: refresh,
   });
 }

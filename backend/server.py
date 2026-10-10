@@ -25,7 +25,13 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 MONGO_URL = os.environ.get("MONGO_URL", "memory://")
 DB_NAME = os.environ.get("DB_NAME", "legacy")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-STARTING_MARKS = 250
+STARTING_MARKS = int(os.environ.get("LEGACY_STARTING_MARKS", "250"))
+VAMPIRE_PACK = "supernatural-vampire"
+VAMPIRE_CLANS = ("Ash Court", "Quiet Parish", "Red Ledger", "Glass Vein", "Thorn Road")
+BLOODLUST_YEARLY = 12
+HUNTER_DEATH_AT = 100
+HUNTER_DEATH_CAUSE = "Hunters closed the account. The body was found in the open."
+SPECIES_EFFECT_KEYS = ("bloodlust", "masquerade", "hunter_heat")
 
 logger = logging.getLogger("legacy")
 logging.basicConfig(level=logging.INFO)
@@ -331,7 +337,7 @@ STORE_PACKS: list[dict[str, Any]] = [
         "id": "supernatural-vampire",
         "category": "supernatural",
         "name": "The Thirst",
-        "blurb": "A later child of your line may be born into the blood. The thirst itself is not awake yet.",
+        "blurb": "Be born into the blood, or take it after thirteen. Hunger and hunters come with it.",
         "cost": 500,
         "grants": {"species": ["vampire"]},
     },
@@ -373,6 +379,11 @@ def choice(
     for key in ("milestone", "fatal", "child_born", "child_name"):
         if extra.get(key) is not None:
             row[key] = extra[key]
+    block = extra.get("species_effects")
+    if isinstance(block, dict):
+        row["species_effects"] = {
+            key: int(value) for key, value in block.items() if key in SPECIES_EFFECT_KEYS and isinstance(value, int)
+        }
     return row
 
 
@@ -926,12 +937,109 @@ def _pick(options: list[dict[str, Any]], salt: int, banned: set[str]) -> dict[st
     return options[salt % len(options)]
 
 
+VAMPIRE_EVENTS: list[dict[str, Any]] = [
+    event(
+        "The bottle is not enough",
+        "Night sits on the tongue. The house sleeps. The want does not.",
+        [
+            choice(
+                "Wait it out",
+                "You stay in the dark, and the want gets a vote.",
+                {"happiness": -3},
+                species_effects={"bloodlust": 8, "masquerade": 4},
+            ),
+            choice(
+                "Step outside",
+                "You are home before the street is busy. Someone mentions a gap in the evening.",
+                {"health": 3},
+                species_effects={"bloodlust": -18, "masquerade": -8, "hunter_heat": 6},
+            ),
+        ],
+    ),
+    event(
+        "A name in the clan",
+        "They already know what you are. They want to know whether you are careful.",
+        [
+            choice(
+                "Sit with them",
+                "You leave with a rule and a quieter story.",
+                species_effects={"masquerade": 10, "hunter_heat": -4, "bloodlust": 4},
+            ),
+            choice(
+                "Skip the meeting",
+                "The seat stays empty. Hunger uses the hour.",
+                species_effects={"bloodlust": 8, "masquerade": -4},
+            ),
+        ],
+    ),
+    event(
+        "Curtains",
+        "Daylight is a rumor you keep out of the room. The neighbors have started counting the lights.",
+        [
+            choice(
+                "Be seen at dusk",
+                "A short walk buys a duller rumor.",
+                species_effects={"masquerade": 8, "bloodlust": 4, "hunter_heat": -2},
+            ),
+            choice(
+                "Stay unseen",
+                "The story about you gets stranger, and so does the want.",
+                {"happiness": -2},
+                species_effects={"masquerade": -8, "bloodlust": 6, "hunter_heat": 4},
+            ),
+        ],
+    ),
+]
+
+HUNTER_EVENTS: list[dict[str, Any]] = [
+    event(
+        "A question at the door",
+        "Someone who is not a neighbor asks when you last saw daylight. They write the answer down.",
+        [
+            choice(
+                "Answer plainly",
+                "The notebook gets a line it did not have.",
+                species_effects={"hunter_heat": 10, "masquerade": -6},
+            ),
+            choice(
+                "Leave for a week",
+                "The story cools. The hunger does not.",
+                {"money": -40},
+                species_effects={"hunter_heat": -12, "bloodlust": 8, "masquerade": 6},
+            ),
+        ],
+    ),
+    event(
+        "A car that does not leave",
+        "It sits across the street through the evening. No one gets out.",
+        [
+            choice(
+                "Wait them out",
+                "Dawn comes. The car is gone. So is the feeling of being unlisted.",
+                species_effects={"hunter_heat": 8, "masquerade": -4, "bloodlust": 4},
+            ),
+            choice(
+                "Use another door",
+                "You are not where they looked. The want comes with you.",
+                species_effects={"hunter_heat": -8, "bloodlust": 6, "masquerade": 4},
+            ),
+        ],
+    ),
+]
+
+
 def fallback_event(character: dict, history: list[dict[str, Any]], generation: int) -> dict[str, Any]:
     age = int(character["age_years"])
     if age >= 100:
         return closing_event(character)
     stage = character.get("stage") or stage_for(age)
     pool = list(EVENTS.get(stage) or EVENTS["adult"])
+    if character.get("species") == "vampire":
+        heat = int(character.get("hunter_heat") or 0)
+        if age >= 13 and heat >= 55:
+            pool = HUNTER_EVENTS + pool
+        elif age >= 1:
+            pool = VAMPIRE_EVENTS + pool
     paths = set(character.get("unlocked_paths") or [])
     for path, extras in PATH_EVENTS.items():
         if path in paths:
@@ -1014,7 +1122,19 @@ def apply_owned_grants(character: dict, owned_packs: list[str]) -> None:
     character["applied_grants"] = sorted(applied)
 
 
-def fresh_character(name: str, background_key: str, owned_packs: list[str]) -> dict[str, Any]:
+def fresh_vampire_data(clan: str | None = None) -> dict[str, Any]:
+    chosen = clan if clan in VAMPIRE_CLANS else VAMPIRE_CLANS[0]
+    return {"clan": chosen, "bloodlust": 20, "masquerade": 72, "last_power_age": None}
+
+
+def fresh_character(
+    name: str,
+    background_key: str,
+    owned_packs: list[str],
+    *,
+    species: str = "human",
+    clan: str | None = None,
+) -> dict[str, Any]:
     background = BACKGROUNDS[background_key]
     character = {
         "name": clean_name(name),
@@ -1030,8 +1150,9 @@ def fresh_character(name: str, background_key: str, owned_packs: list[str]) -> d
         "partner": None,
         "career": None,
         "business": None,
-        "species": "human",
-        "species_data": None,
+        "species": "vampire" if species == "vampire" else "human",
+        "species_data": fresh_vampire_data(clan) if species == "vampire" else None,
+        "hunter_heat": 0,
         "applied_grants": [],
     }
     apply_owned_grants(character, owned_packs)
@@ -1083,6 +1204,7 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
         "business": business,
         "species": "human",
         "species_data": None,
+        "hunter_heat": 0,
         "applied_grants": [],
     }
     return character
@@ -1126,6 +1248,20 @@ def _migrate_character(character: dict[str, Any]) -> dict[str, Any]:
     character.setdefault("business", None)
     character.setdefault("species", "human")
     character.setdefault("species_data", None)
+    character.setdefault("hunter_heat", 0)
+    character["hunter_heat"] = clamp(clamp_delta(character.get("hunter_heat") or 0, 100))
+    if character.get("species") == "vampire":
+        raw = character.get("species_data") if isinstance(character.get("species_data"), dict) else {}
+        clan = raw.get("clan") if raw.get("clan") in VAMPIRE_CLANS else VAMPIRE_CLANS[0]
+        last_power = raw.get("last_power_age")
+        character["species_data"] = {
+            "clan": clan,
+            "bloodlust": clamp(clamp_delta(raw.get("bloodlust", 20), 100)),
+            "masquerade": clamp(clamp_delta(raw.get("masquerade", 72), 100)),
+            "last_power_age": int(last_power) if isinstance(last_power, int) else None,
+        }
+    elif character.get("species") == "human":
+        character["species_data"] = None
     character.setdefault("applied_grants", [])
     if not isinstance(character["life_log"], list):
         character["life_log"] = []
@@ -1145,6 +1281,7 @@ def _migrate_save(save: dict[str, Any]) -> dict[str, Any]:
     save.setdefault("history", [])
     save.setdefault("lineage", [])
     save.setdefault("marks_earned", 0)
+    save.setdefault("true_death", False)
     save.setdefault("deleted_at", None)
     save.setdefault("created_at", now())
     save.setdefault("updated_at", now())
@@ -1204,18 +1341,53 @@ def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
             }
         )
         character["stats"]["family"] = clamp(int(character["stats"]["family"]) + 8)
+    apply_species_effects(character, picked.get("species_effects"))
 
 
-def advance_life(character: dict[str, Any], owned_packs: list[str]) -> None:
-    """Age one year. Species meters will tick here when those packs wake up."""
+def add_bloodlust(character: dict[str, Any], amount: int) -> None:
+    data = character.get("species_data")
+    if not isinstance(data, dict):
+        return
+    nxt = int(data.get("bloodlust") or 0) + int(amount)
+    if nxt > 100:
+        character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + (nxt - 100))
+        nxt = 100
+    data["bloodlust"] = clamp(nxt)
+
+
+def apply_species_effects(character: dict[str, Any], effects: Any) -> None:
+    if character.get("species") != "vampire" or not isinstance(effects, dict):
+        return
+    data = character.get("species_data")
+    if not isinstance(data, dict):
+        return
+    if "bloodlust" in effects:
+        add_bloodlust(character, int(effects["bloodlust"]))
+    if "masquerade" in effects:
+        data["masquerade"] = clamp(int(data.get("masquerade") or 0) + int(effects["masquerade"]))
+    if "hunter_heat" in effects:
+        character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + int(effects["hunter_heat"]))
+
+
+def hunter_pressure(character: dict[str, Any]) -> str | None:
+    if character.get("species") == "vampire" and int(character.get("hunter_heat") or 0) >= HUNTER_DEATH_AT:
+        return HUNTER_DEATH_CAUSE
+    return None
+
+
+def advance_life(character: dict[str, Any], owned_packs: list[str]) -> str | None:
+    """Age one year. Vampire hunger rises; overflow feeds the shared hunter heat."""
     character["age_years"] = int(character["age_years"]) + 1
     character["stage"] = stage_for(character["age_years"])
     age = character["age_years"]
     if age >= 70:
         drop = 1 if age < 85 else 3
         character["stats"]["health"] = clamp(int(character["stats"]["health"]) - drop)
+    if character.get("species") == "vampire":
+        add_bloodlust(character, BLOODLUST_YEARLY)
     apply_owned_grants(character, owned_packs)
     character["unlocked_paths"] = compute_paths(character, owned_packs)
+    return hunter_pressure(character)
 
 
 def trim_log(entries: list[Any], limit: int = 160) -> None:
@@ -1289,6 +1461,14 @@ def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | Non
             row["child_born"] = True
             if isinstance(item.get("child_name"), str) and item["child_name"].strip():
                 row["child_name"] = clean_name(item["child_name"])
+        species_effects: dict[str, int] = {}
+        raw_species = item.get("species_effects")
+        if isinstance(raw_species, dict):
+            for key, value in raw_species.items():
+                if key in SPECIES_EFFECT_KEYS:
+                    species_effects[key] = clamp_delta(value, 40)
+        if species_effects:
+            row["species_effects"] = species_effects
         cleaned.append(row)
     if len(cleaned) < 2:
         return None
@@ -1308,6 +1488,8 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         "stage": character["stage"],
         "background": character["background"],
         "species": character.get("species") or "human",
+        "species_data": character.get("species_data"),
+        "hunter_heat": int(character.get("hunter_heat") or 0),
         "stats": character["stats"],
         "flags": character["flags"],
         "unlocked_paths": character.get("unlocked_paths") or [],
@@ -1337,18 +1519,22 @@ Return ONLY a JSON object with this shape:
       "milestone": null,
       "fatal": false,
       "child_born": false,
-      "child_name": null
+      "child_name": null,
+      "species_effects": {"bloodlust": 0, "masquerade": 0, "hunter_heat": 0}
     }
   ]
 }
 Rules:
 - 2 to 4 choices. Each must change the life in a different direction.
-- Continuity: use the name, age, flags, children, and life_story_so_far. Do not contradict them.
+- Continuity: use the name, age, flags, children, species, and life_story_so_far. Do not contradict them.
 - Never repeat a title or situation from recent_years.
 - If unlocked_paths or owned_careers are present, let some years branch into them. Ignore empty lists.
+- When species is not human, write the year through that body. For a vampire, use species_data (clan, bloodlust, masquerade) and hunter_heat. Some years are hunger, a feeding told only as an absence and a rumor, the clan, the masquerade, or hunters when hunter_heat is high.
+- A feeding is never a method and never a wound. Do not explain how blood is taken.
+- species_effects belongs on vampire choices only: bloodlust, masquerade, hunter_heat, small integers. Omit it when species is human.
 - Imply mature trouble (debt, desire, addiction, violence, hustles) by consequence, never by instruction.
 - No explicit sexual content. No graphic injury. No real-world how-to for crime, drugs, or self-harm.
-- fatal may be true only in late life or when health is already collapsing.
+- fatal may be true only in late life, when health is already collapsing, or for a vampire when hunter_heat is already 70 or higher and age is at least 13.
 - child_born only if age is at least 18, and at most one choice should offer it.
 - Deltas are small integers. Money may move by hundreds, not millions.
 - Do not mention Legacy Marks, menus, or that this is a game.
@@ -1614,6 +1800,7 @@ async def persist_save(save: dict[str, Any]) -> None:
                 "history": save.get("history") or [],
                 "lineage": save.get("lineage") or [],
                 "marks_earned": int(save.get("marks_earned") or 0),
+                "true_death": bool(save.get("true_death")),
                 "updated_at": save["updated_at"],
             }
         },
@@ -1652,6 +1839,39 @@ class SessionIn(BaseModel):
 class NewGameIn(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     background_key: str
+    species: str | None = None
+    clan: str | None = None
+
+
+class TransformIn(BaseModel):
+    clan: str | None = None
+
+
+class SupernaturalIn(BaseModel):
+    action: str = Field(min_length=1, max_length=40)
+
+
+VAMPIRE_ACTIONS: dict[str, dict[str, Any]] = {
+    "feed": {
+        "outcome": "You come back before the street is busy. The want is quieter. A story starts two blocks over.",
+        "bloodlust": -36,
+        "masquerade": -10,
+        "hunter_heat": 8,
+        "health": 4,
+    },
+    "lay_low": {
+        "outcome": "You keep the curtains drawn. The talk thins. The want does not.",
+        "bloodlust": 6,
+        "masquerade": 16,
+        "hunter_heat": -12,
+    },
+    "seek_clan": {
+        "outcome": "You sit where the clan sits. They ask what you have been careless about, and then they let you stay.",
+        "bloodlust": 4,
+        "masquerade": 10,
+        "hunter_heat": -6,
+    },
+}
 
 
 class ChoiceIn(BaseModel):
@@ -1725,7 +1945,7 @@ async def game_backgrounds() -> dict[str, Any]:
         {"key": key, "label": value["label"], "blurb": value["blurb"]}
         for key, value in BACKGROUNDS.items()
     ]
-    return {"backgrounds": items}
+    return {"backgrounds": items, "vampire_clans": list(VAMPIRE_CLANS)}
 
 
 @api.get("/game/state")
@@ -1747,13 +1967,16 @@ async def game_new(body: NewGameIn, user: dict[str, Any] = Depends(current_user)
         raise HTTPException(status_code=409, detail="A record is already open. Choose an heir or abandon it.")
     profile = await ensure_profile(user["user_id"])
     owned = list(profile.get("owned_packs") or [])
-    character = fresh_character(body.name, body.background_key, owned)
+    requested = (body.species or "").strip().lower()
+    birth = "vampire" if requested == "vampire" and VAMPIRE_PACK in owned else "human"
+    character = fresh_character(body.name, body.background_key, owned, species=birth, clan=body.clan)
     opening = await generate_event(character, [], owned, 1)
     save = {
         "user_id": user["user_id"],
         "generation": 1,
         "alive": True,
         "cause_of_death": None,
+        "true_death": False,
         "character": character,
         "current_event": opening,
         "last_outcome": None,
@@ -1767,6 +1990,73 @@ async def game_new(body: NewGameIn, user: dict[str, Any] = Depends(current_user)
     store = require_db()
     await store.saves.insert_one(save)
     return {"save": client_save(save)}
+
+
+async def living_save(user_id: str, owned: list[str]) -> dict[str, Any]:
+    save = await load_active_save(user_id)
+    if not save:
+        raise HTTPException(status_code=404, detail="No life is open")
+    save = await repair_save(save, owned)
+    if not save or not save.get("alive"):
+        raise HTTPException(status_code=409, detail="This life is already over")
+    return save
+
+
+@api.post("/game/transform")
+async def game_transform(body: TransformIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    profile = await ensure_profile(user["user_id"])
+    owned = list(profile.get("owned_packs") or [])
+    if VAMPIRE_PACK not in owned:
+        raise HTTPException(status_code=403, detail="The Thirst is not yours yet.")
+    save = await living_save(user["user_id"], owned)
+    character = save["character"]
+    if character.get("species") == "vampire":
+        raise HTTPException(status_code=409, detail="The blood is already in you.")
+    if character.get("species") != "human":
+        raise HTTPException(status_code=409, detail="Only a human life can take the blood.")
+    if int(character["age_years"]) < 13:
+        raise HTTPException(status_code=403, detail="The change waits until thirteen.")
+    character["species"] = "vampire"
+    character["species_data"] = fresh_vampire_data(body.clan)
+    character["life_log"].append(f"Age {character['age_years']}: The blood took. {character['species_data']['clan']} will know the name.")
+    trim_log(character["life_log"])
+    await persist_save(save)
+    return {"save": client_save(save)}
+
+
+@api.post("/game/supernatural")
+async def game_supernatural(body: SupernaturalIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    profile = await ensure_profile(user["user_id"])
+    owned = list(profile.get("owned_packs") or [])
+    save = await living_save(user["user_id"], owned)
+    character = save["character"]
+    if character.get("species") != "vampire" or not isinstance(character.get("species_data"), dict):
+        raise HTTPException(status_code=409, detail="This life does not walk the blood.")
+    action = VAMPIRE_ACTIONS.get(body.action)
+    if not action:
+        raise HTTPException(status_code=400, detail="That is not a power you hold.")
+    data = character["species_data"]
+    age = int(character["age_years"])
+    if data.get("last_power_age") == age:
+        raise HTTPException(status_code=409, detail="You already spent this year's power.")
+    data["last_power_age"] = age
+    apply_species_effects(
+        character,
+        {key: action[key] for key in ("bloodlust", "masquerade", "hunter_heat") if key in action},
+    )
+    if "health" in action:
+        character["stats"]["health"] = clamp(int(character["stats"]["health"]) + int(action["health"]))
+    outcome = str(action["outcome"])
+    character["life_log"].append(f"Age {age}: {outcome}")
+    trim_log(character["life_log"])
+    save["last_outcome"] = outcome
+    pressure = hunter_pressure(character)
+    if pressure:
+        save["true_death"] = True
+        await finish_death(save, pressure)
+        save["current_event"] = None
+    await persist_save(save)
+    return {"save": client_save(save), "outcome": outcome}
 
 
 async def finish_death(save: dict[str, Any], cause: str) -> dict[str, Any]:
@@ -1819,16 +2109,25 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
     )
     trim_log(save["history"])
     save["last_outcome"] = picked.get("outcome")
-    died = bool(picked.get("fatal")) or int(character["stats"]["health"]) <= 0
+    pressure = hunter_pressure(character)
+    died = bool(picked.get("fatal")) or int(character["stats"]["health"]) <= 0 or pressure is not None
     if died:
-        cause = str(picked.get("outcome") or "The body gave out.")
-        if int(character["stats"]["health"]) <= 0 and not picked.get("fatal"):
+        if pressure and not picked.get("fatal") and int(character["stats"]["health"]) > 0:
+            cause = pressure
+            save["true_death"] = True
+        elif int(character["stats"]["health"]) <= 0 and not picked.get("fatal"):
             cause = str(picked.get("outcome") or "Health failed.")
+        else:
+            cause = str(picked.get("outcome") or "The body gave out.")
         await finish_death(save, cause)
         save["current_event"] = None
     else:
-        advance_life(character, owned)
-        if int(character["stats"]["health"]) <= 0 or int(character["age_years"]) >= 105:
+        year_cause = advance_life(character, owned)
+        if year_cause:
+            save["true_death"] = True
+            await finish_death(save, year_cause)
+            save["current_event"] = None
+        elif int(character["stats"]["health"]) <= 0 or int(character["age_years"]) >= 105:
             await finish_death(save, "The body kept its own calendar.")
             save["current_event"] = None
         else:
@@ -1886,6 +2185,7 @@ async def game_heir(body: HeirIn, user: dict[str, Any] = Depends(current_user)) 
     save["generation"] = int(save["generation"]) + 1
     save["alive"] = True
     save["cause_of_death"] = None
+    save["true_death"] = False
     save["character"] = nxt
     save["history"] = []
     save["last_outcome"] = None
