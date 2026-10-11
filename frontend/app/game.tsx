@@ -23,8 +23,12 @@ import {
   useProfile,
   useSupernatural,
   useTransform,
+  type Circle,
   type Flags,
+  type LycanData,
   type Save,
+  type VampireData,
+  type WitchData,
 } from "../src/use-game";
 
 const STAGE: Record<string, string> = {
@@ -105,21 +109,70 @@ const useStyles = makeStyles((palette) => ({
 
 const StyleSheetAbsolute = { position: "absolute" as const, left: 0, right: 0, top: 0, bottom: 0 };
 
-const POWERS: { id: string; label: string }[] = [
-  { id: "feed", label: "Feed" },
-  { id: "lay_low", label: "Lay low" },
-  { id: "seek_clan", label: "Seek the clan" },
-];
+const PLAYABLE = new Set(["vampire", "lycanthrope", "witch"]);
+
+const YEARLY: Record<string, { id: string; label: string }[]> = {
+  vampire: [
+    { id: "feed", label: "Feed" },
+    { id: "lay_low", label: "Lay low" },
+    { id: "seek_clan", label: "Seek the clan" },
+  ],
+  lycanthrope: [
+    { id: "run_pack", label: "Run with the pack" },
+    { id: "isolate", label: "Isolate" },
+    { id: "hunt", label: "Hunt" },
+  ],
+  witch: [
+    { id: "ritual", label: "Perform a ritual" },
+    { id: "lay_low", label: "Lay low" },
+    { id: "hex_rival", label: "Hex a rival" },
+  ],
+};
+
+const TURN_COPY: Record<string, { title: string; ask: string; button: string; testID: string }> = {
+  vampire: { title: "The Thirst", ask: "The blood will take, if you ask it.", button: "Take the blood", testID: "transform-vampire-button" },
+  lycanthrope: { title: "The Moon", ask: "The bite will take, if you ask it.", button: "Take the bite", testID: "transform-lycanthrope-button" },
+  witch: { title: "The Craft", ask: "The working will wake, if you ask it.", button: "Awaken", testID: "transform-witch-button" },
+};
 
 function bloodlineNotes(held: string[], walking: string): string[] {
   const notes: string[] = [];
   if (walking === "vampire" || held.includes("vampire")) {
     notes.push(walking === "vampire" ? "You walk the Thirst." : "The Thirst is open.");
   }
-  const waiting = held.filter((item) => item !== "vampire");
+  if (walking === "lycanthrope" || held.includes("lycanthrope")) {
+    notes.push(walking === "lycanthrope" ? "You answer the Moon." : "The Moon is open.");
+  }
+  if (walking === "witch" || held.includes("witch")) {
+    notes.push(walking === "witch" ? "You keep a working." : "The Craft is open.");
+  }
+  const waiting = held.filter((item) => !PLAYABLE.has(item));
   if (waiting.length) notes.push(`Bloodlines held, not yet walked: ${waiting.join(", ")}`);
   if (!notes.length) notes.push("No bloodline is held.");
   return notes;
+}
+
+function circleLine(circle: Circle | null): string {
+  if (!circle) return "No circle is kept.";
+  return circle.members.length ? `${circle.name} · ${circle.members.join(", ")}` : circle.name;
+}
+
+function asVampire(save: Save): VampireData | null {
+  const data = save.character.species_data;
+  if (save.character.species !== "vampire" || !data || !("bloodlust" in data)) return null;
+  return data;
+}
+
+function asLycan(save: Save): LycanData | null {
+  const data = save.character.species_data;
+  if (save.character.species !== "lycanthrope" || !data || !("control" in data)) return null;
+  return data;
+}
+
+function asWitch(save: Save): WitchData | null {
+  const data = save.character.species_data;
+  if (save.character.species !== "witch" || !data || !("mana" in data)) return null;
+  return data;
 }
 
 function clanSlug(clan: string): string {
@@ -142,11 +195,23 @@ export default function GameScreen() {
   const snaps = useMemo(() => ["78%"], []);
   const [toast, setToast] = useState<string | null>(null);
   const [clan, setClan] = useState("");
+  const [subtype, setSubtype] = useState("");
+  const [turnSpecies, setTurnSpecies] = useState<"vampire" | "lycanthrope" | "witch">("vampire");
   const save = state.data?.save;
   const clans = backgrounds.data?.vampire_clans ?? [];
+  const subtypes = backgrounds.data?.lycan_subtypes ?? [];
   const chosenClan = clan || clans[0] || "";
+  const chosenSubtype = subtype || subtypes[0] || "";
   const held = profile.data?.profile.unlocks.species ?? [];
   const holdsThirst = held.includes("vampire");
+  const holdsMoon = held.includes("lycanthrope");
+  const holdsCraft = held.includes("witch");
+  const turnOptions = [
+    ...(holdsThirst ? [{ id: "vampire" as const, label: "Vampire" }] : []),
+    ...(holdsMoon ? [{ id: "lycanthrope" as const, label: "Lycanthrope" }] : []),
+    ...(holdsCraft ? [{ id: "witch" as const, label: "Witch" }] : []),
+  ];
+  const chosenTurn = turnOptions.some((item) => item.id === turnSpecies) ? turnSpecies : turnOptions[0]?.id;
 
   useEffect(() => {
     if (!state.isSuccess || state.isFetching) return;
@@ -165,14 +230,19 @@ export default function GameScreen() {
     }
   }
 
-  async function takeBlood() {
+  async function takeChange() {
+    if (!chosenTurn) return;
     setToast(null);
     try {
-      await turn.mutateAsync(chosenClan);
+      await turn.mutateAsync({
+        species: chosenTurn,
+        clan: chosenTurn === "vampire" ? chosenClan : undefined,
+        subtype: chosenTurn === "lycanthrope" ? chosenSubtype : undefined,
+      });
       powersRef.current?.dismiss();
     } catch (error) {
       void hapticError();
-      setToast(error instanceof ApiError ? error.message : "The blood did not take.");
+      setToast(error instanceof ApiError ? error.message : "The change did not take.");
     }
   }
 
@@ -209,9 +279,14 @@ export default function GameScreen() {
     );
   }
 
-  const isVampire = save.character.species === "vampire";
-  const vampire = isVampire ? save.character.species_data : null;
-  const powerSpent = vampire?.last_power_age === save.character.age_years;
+  const vampire = asVampire(save);
+  const lycan = asLycan(save);
+  const witch = asWitch(save);
+  const walking = vampire ?? lycan ?? witch;
+  const powerSpent = walking?.last_power_age === save.character.age_years;
+  const yearly = YEARLY[save.character.species] ?? [];
+  const showPowers = Boolean(walking) || holdsThirst || holdsMoon || holdsCraft;
+  const turnCopy = chosenTurn ? TURN_COPY[chosenTurn] : null;
 
   return (
     <Screen testID="game-screen">
@@ -243,7 +318,7 @@ export default function GameScreen() {
         <GhostButton fill testID="open-life-sheet" label="Life" onPress={() => lifeRef.current?.present()} />
         <GhostButton fill testID="open-lineage-button" label="Family" onPress={() => router.push("/lineage")} />
         <GhostButton fill testID="open-store-button" label="Marks" onPress={() => router.push("/store")} />
-        {isVampire || holdsThirst ? (
+        {showPowers ? (
           <GhostButton fill testID="open-powers-sheet" label="Powers" onPress={() => powersRef.current?.present()} />
         ) : null}
       </View>
@@ -327,7 +402,9 @@ export default function GameScreen() {
         handleIndicatorStyle={{ backgroundColor: colors.accent }}
       >
         <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="powers-sheet">
-          <Text style={styles.sheetTitle}>{isVampire ? "The Thirst" : "Powers"}</Text>
+          <Text style={styles.sheetTitle}>
+            {vampire ? "The Thirst" : lycan ? "The Moon" : witch ? "The Craft" : "Powers"}
+          </Text>
           {vampire ? (
             <>
               <Text style={styles.note}>{vampire.clan}</Text>
@@ -336,10 +413,35 @@ export default function GameScreen() {
                 <Meter label="Masquerade" value={vampire.masquerade} />
                 <Meter label="Hunter heat" value={save.character.hunter_heat} />
               </View>
+            </>
+          ) : null}
+          {lycan ? (
+            <>
+              <Text style={styles.note}>{lycan.subtype}</Text>
+              <Text style={styles.note}>{circleLine(lycan.pack)}</Text>
+              <View style={styles.meters}>
+                <Meter label="Moon" value={lycan.moon} />
+                <Meter label="Control" value={lycan.control} />
+                <Meter label="Hunter heat" value={save.character.hunter_heat} />
+              </View>
+            </>
+          ) : null}
+          {witch ? (
+            <>
+              <Text style={styles.note}>{circleLine(witch.coven)}</Text>
+              <View style={styles.meters}>
+                <Meter label="Mana" value={witch.mana} />
+                <Meter label="Notoriety" value={witch.notoriety} />
+                <Meter label="Hunter heat" value={save.character.hunter_heat} />
+              </View>
+            </>
+          ) : null}
+          {walking ? (
+            <>
               <Text style={styles.section}>THIS YEAR</Text>
               {powerSpent ? <Text style={styles.note}>This year's power is spent.</Text> : null}
               <View style={styles.powers}>
-                {POWERS.map((item) => (
+                {yearly.map((item) => (
                   <GhostButton
                     key={item.id}
                     testID={`power-${item.id.replace(/_/g, "-")}`}
@@ -353,34 +455,72 @@ export default function GameScreen() {
           ) : (
             <>
               <Text style={styles.note}>
-                {save.character.age_years >= 13
-                  ? "The blood will take, if you ask it."
-                  : "The change waits until thirteen."}
+                {save.character.age_years >= 13 && turnCopy ? turnCopy.ask : "The change waits until thirteen."}
               </Text>
-              {save.character.age_years >= 13 ? (
+              {save.character.age_years >= 13 && turnCopy ? (
                 <>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-                    {clans.map((item) => {
-                      const selected = item === chosenClan;
-                      return (
-                        <Pressable
-                          key={item}
-                          testID={`power-clan-${clanSlug(item)}`}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected }}
-                          onPress={() => setClan(item)}
-                          style={[styles.chip, selected ? styles.chipOn : null]}
-                        >
-                          <Text style={styles.chipText}>{item}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
+                  {turnOptions.length > 1 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+                      {turnOptions.map((item) => {
+                        const selected = item.id === chosenTurn;
+                        return (
+                          <Pressable
+                            key={item.id}
+                            testID={`transform-species-${item.id}`}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected }}
+                            onPress={() => setTurnSpecies(item.id)}
+                            style={[styles.chip, selected ? styles.chipOn : null]}
+                          >
+                            <Text style={styles.chipText}>{item.label}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  ) : null}
+                  {chosenTurn === "vampire" ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+                      {clans.map((item) => {
+                        const selected = item === chosenClan;
+                        return (
+                          <Pressable
+                            key={item}
+                            testID={`power-clan-${clanSlug(item)}`}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected }}
+                            onPress={() => setClan(item)}
+                            style={[styles.chip, selected ? styles.chipOn : null]}
+                          >
+                            <Text style={styles.chipText}>{item}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  ) : null}
+                  {chosenTurn === "lycanthrope" ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+                      {subtypes.map((item) => {
+                        const selected = item === chosenSubtype;
+                        return (
+                          <Pressable
+                            key={item}
+                            testID={`power-subtype-${item}`}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected }}
+                            onPress={() => setSubtype(item)}
+                            style={[styles.chip, selected ? styles.chipOn : null]}
+                          >
+                            <Text style={styles.chipText}>{item}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  ) : null}
                   <PrimaryButton
-                    testID="transform-vampire-button"
-                    label={turn.isPending ? "Turning..." : "Take the blood"}
+                    testID={turnCopy.testID}
+                    label={turn.isPending ? "Turning..." : turnCopy.button}
                     disabled={turn.isPending}
-                    onPress={() => void takeBlood()}
+                    onPress={() => void takeChange()}
                   />
                 </>
               ) : null}
@@ -403,9 +543,9 @@ function Header({ save }: { save: Save }) {
       </View>
       <Text style={styles.meta}>
         Age {save.character.age_years} · {stage} · Generation {save.generation}
-        {save.character.species === "vampire" && save.character.species_data
-          ? ` · ${save.character.species_data.clan}`
-          : ""}
+        {asVampire(save) ? ` · ${asVampire(save)?.clan}` : ""}
+        {asLycan(save) ? ` · ${asLycan(save)?.subtype}` : ""}
+        {asWitch(save) ? " · the Craft" : ""}
       </Text>
     </>
   );

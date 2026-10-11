@@ -74,12 +74,24 @@ export default function CreateScreen() {
   const create = useNewGame();
   const [name, setName] = useState("");
   const [key, setKey] = useState("stable");
-  const [species, setSpecies] = useState<"human" | "vampire">("human");
+  const [species, setSpecies] = useState<"human" | "vampire" | "lycanthrope" | "witch">("human");
   const [clan, setClan] = useState("");
+  const [subtype, setSubtype] = useState("");
   const [toast, setToast] = useState<string | null>(null);
-  const holdsThirst = profile.data?.profile.unlocks.species.includes("vampire") ?? false;
+  const held = profile.data?.profile.unlocks.species ?? [];
+  const holdsThirst = held.includes("vampire");
+  const holdsMoon = held.includes("lycanthrope");
+  const holdsCraft = held.includes("witch");
   const clans = backgrounds.data?.vampire_clans ?? [];
+  const subtypes = backgrounds.data?.lycan_subtypes ?? [];
   const chosenClan = clan || clans[0] || "";
+  const chosenSubtype = subtype || subtypes[0] || "";
+  const birthChoices = [
+    { id: "human" as const, label: "Human" },
+    ...(holdsThirst ? [{ id: "vampire" as const, label: "Vampire" }] : []),
+    ...(holdsMoon ? [{ id: "lycanthrope" as const, label: "Lycanthrope" }] : []),
+    ...(holdsCraft ? [{ id: "witch" as const, label: "Witch" }] : []),
+  ];
 
   async function begin() {
     if (!name.trim()) {
@@ -88,11 +100,13 @@ export default function CreateScreen() {
     }
     setToast(null);
     try {
+      const birth = birthChoices.some((item) => item.id === species) ? species : "human";
       await create.mutateAsync({
         name: name.trim(),
         background_key: key,
-        species: holdsThirst && species === "vampire" ? "vampire" : "human",
-        clan: holdsThirst && species === "vampire" ? chosenClan : undefined,
+        species: birth,
+        clan: birth === "vampire" ? chosenClan : undefined,
+        subtype: birth === "lycanthrope" ? chosenSubtype : undefined,
       });
       router.replace("/game");
     } catch (error) {
@@ -107,28 +121,25 @@ export default function CreateScreen() {
         <Text style={styles.title}>Where you start</Text>
         <Text style={styles.lede}>The house you are born into sets the first numbers. It does not set the ending.</Text>
         <Toast message={toast} />
-        {holdsThirst ? (
+        {birthChoices.length > 1 ? (
           <>
             <Text style={styles.kicker}>BLOOD</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-              <Pressable
-                testID="birth-species-human"
-                accessibilityRole="button"
-                accessibilityState={{ selected: species === "human" }}
-                onPress={() => setSpecies("human")}
-                style={[styles.chip, species === "human" ? styles.chipOn : null]}
-              >
-                <Text style={styles.chipText}>Human</Text>
-              </Pressable>
-              <Pressable
-                testID="birth-species-vampire"
-                accessibilityRole="button"
-                accessibilityState={{ selected: species === "vampire" }}
-                onPress={() => setSpecies("vampire")}
-                style={[styles.chip, species === "vampire" ? styles.chipOn : null]}
-              >
-                <Text style={styles.chipText}>Vampire</Text>
-              </Pressable>
+              {birthChoices.map((item) => {
+                const selected = species === item.id;
+                return (
+                  <Pressable
+                    key={item.id}
+                    testID={`birth-species-${item.id}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => setSpecies(item.id)}
+                    style={[styles.chip, selected ? styles.chipOn : null]}
+                  >
+                    <Text style={styles.chipText}>{item.label}</Text>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
             {species === "vampire" ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
@@ -142,6 +153,25 @@ export default function CreateScreen() {
                       accessibilityRole="button"
                       accessibilityState={{ selected }}
                       onPress={() => setClan(item)}
+                      style={[styles.chip, selected ? styles.chipOn : null]}
+                    >
+                      <Text style={styles.chipText}>{item}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
+            {species === "lycanthrope" ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+                {subtypes.map((item) => {
+                  const selected = item === chosenSubtype;
+                  return (
+                    <Pressable
+                      key={item}
+                      testID={`birth-subtype-${item}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => setSubtype(item)}
                       style={[styles.chip, selected ? styles.chipOn : null]}
                     >
                       <Text style={styles.chipText}>{item}</Text>

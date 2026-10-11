@@ -6,6 +6,7 @@ import copy
 import json
 import logging
 import os
+import random
 import re
 import secrets
 import uuid
@@ -27,11 +28,23 @@ DB_NAME = os.environ.get("DB_NAME", "legacy")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 STARTING_MARKS = int(os.environ.get("LEGACY_STARTING_MARKS", "250"))
 VAMPIRE_PACK = "supernatural-vampire"
+LYCAN_PACK = "supernatural-lycanthrope"
+WITCH_PACK = "supernatural-witch"
+SPECIES_PACKS = {"vampire": VAMPIRE_PACK, "lycanthrope": LYCAN_PACK, "witch": WITCH_PACK}
 VAMPIRE_CLANS = ("Ash Court", "Quiet Parish", "Red Ledger", "Glass Vein", "Thorn Road")
+LYCAN_SUBTYPES = ("wolf", "bear", "tiger", "boar", "rat", "raven", "serpent", "stag")
+MOON_PHASES = (20, 35, 50, 65, 80, 100, 70, 40)
+MOON_SHIFT_AT = 80
+CONTROL_SHIFT_AT = 40
+NOTORIETY_HEAT_AT = 60
 BLOODLUST_YEARLY = 12
+MANA_YEARLY = 12
 HUNTER_DEATH_AT = 100
 HUNTER_DEATH_CAUSE = "Hunters closed the account. The body was found in the open."
-SPECIES_EFFECT_KEYS = ("bloodlust", "masquerade", "hunter_heat")
+SPECIES_EFFECT_KEYS = ("bloodlust", "masquerade", "hunter_heat", "moon", "control", "mana", "notoriety")
+PACK_TITLES = ("Grey Acre", "The Low Road", "Salt Line", "Hearth Kin", "The Quiet Mile")
+COVEN_TITLES = ("The Closed Kitchen", "Lantern House", "The Third Stair", "Brine and Thread", "The Unlit Room")
+CIRCLE_NAMES = ("Ruth", "Ellis", "June", "Hart", "Ned", "Ivy", "Cal", "Moss", "Wynn", "Ada")
 
 logger = logging.getLogger("legacy")
 logging.basicConfig(level=logging.INFO)
@@ -345,7 +358,7 @@ STORE_PACKS: list[dict[str, Any]] = [
         "id": "supernatural-lycanthrope",
         "category": "supernatural",
         "name": "The Moon",
-        "blurb": "A later child may answer to the moon. The shift is not yours to call yet.",
+        "blurb": "Be born under the moon, or take the bite after thirteen. A full moon does not ask.",
         "cost": 560,
         "grants": {"species": ["lycanthrope"]},
     },
@@ -353,7 +366,7 @@ STORE_PACKS: list[dict[str, Any]] = [
         "id": "supernatural-witch",
         "category": "supernatural",
         "name": "The Craft",
-        "blurb": "A later child may keep a working. The coven does not know your name yet.",
+        "blurb": "Be born to a working, or awaken after thirteen. Flashy magic draws notice.",
         "cost": 440,
         "grants": {"species": ["witch"]},
     },
@@ -1028,18 +1041,144 @@ HUNTER_EVENTS: list[dict[str, Any]] = [
 ]
 
 
+LYCAN_EVENTS: list[dict[str, Any]] = [
+    event(
+        "The tree line",
+        "The body knows the hour better than you do. The county is mostly asleep.",
+        [
+            choice(
+                "Stay inside",
+                "You keep the door shut. The want paces the room.",
+                {"happiness": -2},
+                species_effects={"control": 6, "moon": 4},
+            ),
+            choice(
+                "Go with it",
+                "You are back by dawn. A fence is down two fields over.",
+                species_effects={"control": -8, "hunter_heat": 6},
+            ),
+        ],
+    ),
+    event(
+        "The pack's fire",
+        "They saved you a place. They also saved the question of where you were last night.",
+        [
+            choice(
+                "Sit down",
+                "The story gets smaller once other people are in it.",
+                species_effects={"control": 8, "hunter_heat": -2},
+            ),
+            choice(
+                "Leave before the names",
+                "You keep your evening. They keep the suspicion.",
+                species_effects={"control": -4, "hunter_heat": 4},
+            ),
+        ],
+    ),
+]
+
+SHIFT_EVENTS: list[dict[str, Any]] = [
+    event(
+        "A night you do not finish",
+        "The moon is up and your hands are not entirely yours. Morning will have to explain it.",
+        [
+            choice(
+                "Lock yourself in",
+                "The room holds. The county still invents a version.",
+                {"happiness": -4},
+                species_effects={"control": 10, "hunter_heat": 4},
+            ),
+            choice(
+                "Let the body go",
+                "You wake farther out than you planned. Someone saw the shape, not the name.",
+                species_effects={"control": -10, "hunter_heat": 12},
+            ),
+        ],
+    ),
+]
+
+WITCH_EVENTS: list[dict[str, Any]] = [
+    event(
+        "A small working",
+        "The kitchen is empty. The thing you want is ordinary, which does not make it free.",
+        [
+            choice(
+                "Leave it unlit",
+                "The want stays a want. The house stays dull.",
+                species_effects={"mana": 6, "notoriety": -4},
+            ),
+            choice(
+                "Light it",
+                "The result arrives. So does a question from someone who was not invited.",
+                {"smarts": 2},
+                species_effects={"mana": -12, "notoriety": 8, "hunter_heat": 4},
+            ),
+        ],
+    ),
+    event(
+        "The coven's table",
+        "They pour for you. They also count who has been talking about your hands.",
+        [
+            choice(
+                "Take the seat",
+                "You leave with a rule and a quieter week.",
+                species_effects={"notoriety": -6, "mana": 4, "hunter_heat": -2},
+            ),
+            choice(
+                "Skip it",
+                "The chair stays empty. The working you do alone is louder.",
+                species_effects={"notoriety": 6, "mana": -4},
+            ),
+        ],
+    ),
+]
+
+NOTORIETY_EVENTS: list[dict[str, Any]] = [
+    event(
+        "A name said twice",
+        "Someone repeats what your rival's week looked like. They do not say magic. They do not have to.",
+        [
+            choice(
+                "Be boring in public",
+                "A dull afternoon buys a thinner story.",
+                species_effects={"notoriety": -10, "hunter_heat": -6, "mana": 4},
+            ),
+            choice(
+                "Let them talk",
+                "The story grows a second detail you did not put there.",
+                species_effects={"notoriety": 8, "hunter_heat": 8},
+            ),
+        ],
+    ),
+]
+
+
 def fallback_event(character: dict, history: list[dict[str, Any]], generation: int) -> dict[str, Any]:
     age = int(character["age_years"])
     if age >= 100:
         return closing_event(character)
     stage = character.get("stage") or stage_for(age)
     pool = list(EVENTS.get(stage) or EVENTS["adult"])
-    if character.get("species") == "vampire":
+    data = character.get("species_data") if isinstance(character.get("species_data"), dict) else {}
+    species = character.get("species")
+    if species == "vampire":
         heat = int(character.get("hunter_heat") or 0)
         if age >= 13 and heat >= 55:
             pool = HUNTER_EVENTS + pool
         elif age >= 1:
             pool = VAMPIRE_EVENTS + pool
+    elif species == "lycanthrope":
+        moon = int(data.get("moon") or 0)
+        control = int(data.get("control") or 0)
+        if age >= 13 and moon >= MOON_SHIFT_AT and control <= CONTROL_SHIFT_AT + 10:
+            pool = SHIFT_EVENTS + pool
+        elif age >= 1:
+            pool = LYCAN_EVENTS + pool
+    elif species == "witch":
+        if age >= 13 and int(data.get("notoriety") or 0) >= NOTORIETY_HEAT_AT:
+            pool = NOTORIETY_EVENTS + pool
+        elif age >= 1:
+            pool = WITCH_EVENTS + pool
     paths = set(character.get("unlocked_paths") or [])
     for path, extras in PATH_EVENTS.items():
         if path in paths:
@@ -1127,6 +1266,46 @@ def fresh_vampire_data(clan: str | None = None) -> dict[str, Any]:
     return {"clan": chosen, "bloodlust": 20, "masquerade": 72, "last_power_age": None}
 
 
+def pick_subtype(requested: str | None) -> str:
+    text = (requested or "").strip().lower()
+    if text in LYCAN_SUBTYPES:
+        return text
+    return random.choice(LYCAN_SUBTYPES)
+
+
+def fresh_circle(titles: tuple[str, ...]) -> dict[str, Any]:
+    return {"name": random.choice(titles), "members": random.sample(list(CIRCLE_NAMES), 3)}
+
+
+def fresh_lycan_data(subtype: str | None = None) -> dict[str, Any]:
+    return {
+        "subtype": pick_subtype(subtype),
+        "moon": MOON_PHASES[0],
+        "control": 64,
+        "pack": fresh_circle(PACK_TITLES),
+        "last_power_age": None,
+    }
+
+
+def fresh_witch_data() -> dict[str, Any]:
+    return {
+        "mana": 48,
+        "notoriety": 12,
+        "coven": fresh_circle(COVEN_TITLES),
+        "last_power_age": None,
+    }
+
+
+def species_payload(species: str, clan: str | None = None, subtype: str | None = None) -> tuple[str, dict[str, Any] | None]:
+    if species == "vampire":
+        return "vampire", fresh_vampire_data(clan)
+    if species == "lycanthrope":
+        return "lycanthrope", fresh_lycan_data(subtype)
+    if species == "witch":
+        return "witch", fresh_witch_data()
+    return "human", None
+
+
 def fresh_character(
     name: str,
     background_key: str,
@@ -1134,8 +1313,10 @@ def fresh_character(
     *,
     species: str = "human",
     clan: str | None = None,
+    subtype: str | None = None,
 ) -> dict[str, Any]:
     background = BACKGROUNDS[background_key]
+    born, payload = species_payload(species, clan, subtype)
     character = {
         "name": clean_name(name),
         "background": background["label"],
@@ -1150,8 +1331,8 @@ def fresh_character(
         "partner": None,
         "career": None,
         "business": None,
-        "species": "vampire" if species == "vampire" else "human",
-        "species_data": fresh_vampire_data(clan) if species == "vampire" else None,
+        "species": born,
+        "species_data": payload,
         "hunter_heat": 0,
         "applied_grants": [],
     }
@@ -1250,16 +1431,13 @@ def _migrate_character(character: dict[str, Any]) -> dict[str, Any]:
     character.setdefault("species_data", None)
     character.setdefault("hunter_heat", 0)
     character["hunter_heat"] = clamp(clamp_delta(character.get("hunter_heat") or 0, 100))
+    raw = character.get("species_data") if isinstance(character.get("species_data"), dict) else {}
     if character.get("species") == "vampire":
-        raw = character.get("species_data") if isinstance(character.get("species_data"), dict) else {}
-        clan = raw.get("clan") if raw.get("clan") in VAMPIRE_CLANS else VAMPIRE_CLANS[0]
-        last_power = raw.get("last_power_age")
-        character["species_data"] = {
-            "clan": clan,
-            "bloodlust": clamp(clamp_delta(raw.get("bloodlust", 20), 100)),
-            "masquerade": clamp(clamp_delta(raw.get("masquerade", 72), 100)),
-            "last_power_age": int(last_power) if isinstance(last_power, int) else None,
-        }
+        character["species_data"] = _migrate_vampire(raw)
+    elif character.get("species") == "lycanthrope":
+        character["species_data"] = _migrate_lycan(raw)
+    elif character.get("species") == "witch":
+        character["species_data"] = _migrate_witch(raw)
     elif character.get("species") == "human":
         character["species_data"] = None
     character.setdefault("applied_grants", [])
@@ -1355,39 +1533,149 @@ def add_bloodlust(character: dict[str, Any], amount: int) -> None:
     data["bloodlust"] = clamp(nxt)
 
 
+def _meter(data: dict[str, Any], key: str, amount: int) -> None:
+    data[key] = clamp(int(data.get(key) or 0) + int(amount))
+
+
+def add_notoriety(character: dict[str, Any], amount: int) -> None:
+    data = character.get("species_data")
+    if not isinstance(data, dict):
+        return
+    nxt = int(data.get("notoriety") or 0) + int(amount)
+    if nxt > 100:
+        character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + (nxt - 100))
+        nxt = 100
+    data["notoriety"] = clamp(nxt)
+
+
 def apply_species_effects(character: dict[str, Any], effects: Any) -> None:
-    if character.get("species") != "vampire" or not isinstance(effects, dict):
+    species = character.get("species")
+    if species not in SPECIES_PACKS or not isinstance(effects, dict):
         return
     data = character.get("species_data")
     if not isinstance(data, dict):
         return
-    if "bloodlust" in effects:
-        add_bloodlust(character, int(effects["bloodlust"]))
-    if "masquerade" in effects:
-        data["masquerade"] = clamp(int(data.get("masquerade") or 0) + int(effects["masquerade"]))
     if "hunter_heat" in effects:
         character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + int(effects["hunter_heat"]))
+    if species == "vampire":
+        if "bloodlust" in effects:
+            add_bloodlust(character, int(effects["bloodlust"]))
+        if "masquerade" in effects:
+            _meter(data, "masquerade", int(effects["masquerade"]))
+    elif species == "lycanthrope":
+        if "moon" in effects:
+            _meter(data, "moon", int(effects["moon"]))
+        if "control" in effects:
+            _meter(data, "control", int(effects["control"]))
+    elif species == "witch":
+        if "mana" in effects:
+            _meter(data, "mana", int(effects["mana"]))
+        if "notoriety" in effects:
+            add_notoriety(character, int(effects["notoriety"]))
 
 
 def hunter_pressure(character: dict[str, Any]) -> str | None:
-    if character.get("species") == "vampire" and int(character.get("hunter_heat") or 0) >= HUNTER_DEATH_AT:
+    if character.get("species") in SPECIES_PACKS and int(character.get("hunter_heat") or 0) >= HUNTER_DEATH_AT:
         return HUNTER_DEATH_CAUSE
     return None
 
 
+def tick_lycanthrope(character: dict[str, Any]) -> None:
+    data = character.get("species_data")
+    if not isinstance(data, dict):
+        return
+    age = int(character["age_years"])
+    data["moon"] = MOON_PHASES[age % len(MOON_PHASES)]
+    control = int(data.get("control") or 0)
+    if int(data["moon"]) < MOON_SHIFT_AT or control > CONTROL_SHIFT_AT:
+        return
+    character["stats"]["health"] = clamp(int(character["stats"]["health"]) - 12)
+    character["stats"]["happiness"] = clamp(int(character["stats"]["happiness"]) - 8)
+    character["stats"]["reputation"] = clamp(int(character["stats"]["reputation"]) - 10)
+    character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + 16)
+    data["control"] = clamp(control - 6)
+    character["life_log"].append(f"Age {age}: The moon took the body. Morning found the story already walking around town.")
+
+
+def tick_witch(character: dict[str, Any]) -> None:
+    data = character.get("species_data")
+    if not isinstance(data, dict):
+        return
+    data["mana"] = clamp(int(data.get("mana") or 0) + MANA_YEARLY)
+    if int(data.get("notoriety") or 0) < NOTORIETY_HEAT_AT:
+        return
+    character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + 8)
+    age = int(character["age_years"])
+    character["life_log"].append(f"Age {age}: The working was noticed. Someone wrote the night down.")
+
+
 def advance_life(character: dict[str, Any], owned_packs: list[str]) -> str | None:
-    """Age one year. Vampire hunger rises; overflow feeds the shared hunter heat."""
+    """Age one year. Species meters tick, and hunter heat can close the life."""
     character["age_years"] = int(character["age_years"]) + 1
     character["stage"] = stage_for(character["age_years"])
     age = character["age_years"]
     if age >= 70:
         drop = 1 if age < 85 else 3
         character["stats"]["health"] = clamp(int(character["stats"]["health"]) - drop)
-    if character.get("species") == "vampire":
+    species = character.get("species")
+    if species == "vampire":
         add_bloodlust(character, BLOODLUST_YEARLY)
+    elif species == "lycanthrope":
+        tick_lycanthrope(character)
+    elif species == "witch":
+        tick_witch(character)
     apply_owned_grants(character, owned_packs)
     character["unlocked_paths"] = compute_paths(character, owned_packs)
     return hunter_pressure(character)
+
+
+def _last_power_age(raw: dict[str, Any]) -> int | None:
+    last_power = raw.get("last_power_age")
+    return int(last_power) if isinstance(last_power, int) else None
+
+
+def _clean_circle(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    name = " ".join(str(raw.get("name") or "").split())
+    if not name:
+        return None
+    members: list[str] = []
+    for item in raw.get("members") or []:
+        text = " ".join(str(item).split())
+        if text:
+            members.append(text[:40])
+    return {"name": name[:80], "members": members[:8]}
+
+
+def _migrate_vampire(raw: dict[str, Any]) -> dict[str, Any]:
+    clan = raw.get("clan") if raw.get("clan") in VAMPIRE_CLANS else VAMPIRE_CLANS[0]
+    return {
+        "clan": clan,
+        "bloodlust": clamp(clamp_delta(raw.get("bloodlust", 20), 100)),
+        "masquerade": clamp(clamp_delta(raw.get("masquerade", 72), 100)),
+        "last_power_age": _last_power_age(raw),
+    }
+
+
+def _migrate_lycan(raw: dict[str, Any]) -> dict[str, Any]:
+    subtype = raw.get("subtype") if raw.get("subtype") in LYCAN_SUBTYPES else LYCAN_SUBTYPES[0]
+    return {
+        "subtype": subtype,
+        "moon": clamp(clamp_delta(raw.get("moon", MOON_PHASES[0]), 100)),
+        "control": clamp(clamp_delta(raw.get("control", 64), 100)),
+        "pack": _clean_circle(raw.get("pack")),
+        "last_power_age": _last_power_age(raw),
+    }
+
+
+def _migrate_witch(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mana": clamp(clamp_delta(raw.get("mana", 48), 100)),
+        "notoriety": clamp(clamp_delta(raw.get("notoriety", 12), 100)),
+        "coven": _clean_circle(raw.get("coven")),
+        "last_power_age": _last_power_age(raw),
+    }
 
 
 def trim_log(entries: list[Any], limit: int = 160) -> None:
@@ -1489,6 +1777,9 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         "background": character["background"],
         "species": character.get("species") or "human",
         "species_data": character.get("species_data"),
+        "subtype": (character.get("species_data") or {}).get("subtype") if isinstance(character.get("species_data"), dict) else None,
+        "pack": (character.get("species_data") or {}).get("pack") if isinstance(character.get("species_data"), dict) else None,
+        "coven": (character.get("species_data") or {}).get("coven") if isinstance(character.get("species_data"), dict) else None,
         "hunter_heat": int(character.get("hunter_heat") or 0),
         "stats": character["stats"],
         "flags": character["flags"],
@@ -1520,21 +1811,23 @@ Return ONLY a JSON object with this shape:
       "fatal": false,
       "child_born": false,
       "child_name": null,
-      "species_effects": {"bloodlust": 0, "masquerade": 0, "hunter_heat": 0}
+      "species_effects": {"bloodlust": 0, "masquerade": 0, "hunter_heat": 0, "moon": 0, "control": 0, "mana": 0, "notoriety": 0}
     }
   ]
 }
 Rules:
 - 2 to 4 choices. Each must change the life in a different direction.
-- Continuity: use the name, age, flags, children, species, and life_story_so_far. Do not contradict them.
+- Continuity: use the name, age, flags, children, species, subtype, pack, coven, and life_story_so_far. Do not contradict them.
 - Never repeat a title or situation from recent_years.
 - If unlocked_paths or owned_careers are present, let some years branch into them. Ignore empty lists.
-- When species is not human, write the year through that body. For a vampire, use species_data (clan, bloodlust, masquerade) and hunter_heat. Some years are hunger, a feeding told only as an absence and a rumor, the clan, the masquerade, or hunters when hunter_heat is high.
-- A feeding is never a method and never a wound. Do not explain how blood is taken.
-- species_effects belongs on vampire choices only: bloodlust, masquerade, hunter_heat, small integers. Omit it when species is human.
+- When species is not human, write the year through that body.
+- Vampire: use clan, bloodlust, masquerade, and hunter_heat. Some years are hunger, a feeding told only as an absence and a rumor, the clan, the masquerade, or hunters when hunter_heat is high. A feeding is never a method and never a wound.
+- Lycanthrope: use subtype, moon, control, and pack. Some years follow the moon as it climbs toward full. If moon is high and control is low, write an uncontrolled shift as a missing night and a story in town, never as a wound or a method. The pack may be in the year when pack is not null.
+- Witch: use mana, notoriety, and coven. Some years are a ritual told by its result, the coven, or notice when notoriety is high. A ritual is never a recipe. Flashy magic raises notoriety and can raise hunter_heat.
+- species_effects uses only the meters that belong to the species: vampire bloodlust, masquerade, hunter_heat; lycanthrope moon, control, hunter_heat; witch mana, notoriety, hunter_heat. Small integers. Omit the block when species is human.
 - Imply mature trouble (debt, desire, addiction, violence, hustles) by consequence, never by instruction.
 - No explicit sexual content. No graphic injury. No real-world how-to for crime, drugs, or self-harm.
-- fatal may be true only in late life, when health is already collapsing, or for a vampire when hunter_heat is already 70 or higher and age is at least 13.
+- fatal may be true only in late life, when health is already collapsing, or when hunter_heat is already 70 or higher and age is at least 13.
 - child_born only if age is at least 18, and at most one choice should offer it.
 - Deltas are small integers. Money may move by hundreds, not millions.
 - Do not mention Legacy Marks, menus, or that this is a game.
@@ -1841,10 +2134,13 @@ class NewGameIn(BaseModel):
     background_key: str
     species: str | None = None
     clan: str | None = None
+    subtype: str | None = None
 
 
 class TransformIn(BaseModel):
+    species: str | None = None
     clan: str | None = None
+    subtype: str | None = None
 
 
 class SupernaturalIn(BaseModel):
@@ -1872,6 +2168,53 @@ VAMPIRE_ACTIONS: dict[str, dict[str, Any]] = {
         "hunter_heat": -6,
     },
 }
+
+LYCAN_ACTIONS: dict[str, dict[str, Any]] = {
+    "run_pack": {
+        "outcome": "You run until the lights are small. The others keep your name out of it, mostly.",
+        "control": 6,
+        "hunter_heat": 5,
+        "happiness": 4,
+    },
+    "isolate": {
+        "outcome": "You take a room with a lock and no audience. The night is worse. The morning is yours.",
+        "control": 18,
+        "hunter_heat": -6,
+        "happiness": -10,
+    },
+    "hunt": {
+        "outcome": "You come back quieter. A story starts at the edge of the county, without your name in it.",
+        "control": -4,
+        "hunter_heat": 12,
+        "health": 2,
+        "reputation": -8,
+    },
+}
+
+WITCH_ACTIONS: dict[str, dict[str, Any]] = {
+    "ritual": {
+        "outcome": "The result arrives by evening. So does a question from someone who was not invited.",
+        "mana": -28,
+        "notoriety": 14,
+        "hunter_heat": 8,
+        "smarts": 2,
+    },
+    "lay_low": {
+        "outcome": "You do nothing anyone would repeat. The talk thins.",
+        "notoriety": -14,
+        "hunter_heat": -8,
+        "happiness": -4,
+    },
+    "hex_rival": {
+        "outcome": "A rival's week goes wrong in public. People start looking at your hands.",
+        "mana": -18,
+        "notoriety": 16,
+        "hunter_heat": 12,
+        "reputation": -4,
+    },
+}
+
+SPECIES_ACTIONS = {"vampire": VAMPIRE_ACTIONS, "lycanthrope": LYCAN_ACTIONS, "witch": WITCH_ACTIONS}
 
 
 class ChoiceIn(BaseModel):
@@ -1945,7 +2288,7 @@ async def game_backgrounds() -> dict[str, Any]:
         {"key": key, "label": value["label"], "blurb": value["blurb"]}
         for key, value in BACKGROUNDS.items()
     ]
-    return {"backgrounds": items, "vampire_clans": list(VAMPIRE_CLANS)}
+    return {"backgrounds": items, "vampire_clans": list(VAMPIRE_CLANS), "lycan_subtypes": list(LYCAN_SUBTYPES)}
 
 
 @api.get("/game/state")
@@ -1968,8 +2311,15 @@ async def game_new(body: NewGameIn, user: dict[str, Any] = Depends(current_user)
     profile = await ensure_profile(user["user_id"])
     owned = list(profile.get("owned_packs") or [])
     requested = (body.species or "").strip().lower()
-    birth = "vampire" if requested == "vampire" and VAMPIRE_PACK in owned else "human"
-    character = fresh_character(body.name, body.background_key, owned, species=birth, clan=body.clan)
+    birth = requested if requested in SPECIES_PACKS and SPECIES_PACKS[requested] in owned else "human"
+    character = fresh_character(
+        body.name,
+        body.background_key,
+        owned,
+        species=birth,
+        clan=body.clan,
+        subtype=body.subtype,
+    )
     opening = await generate_event(character, [], owned, 1)
     save = {
         "user_id": user["user_id"],
@@ -2006,19 +2356,33 @@ async def living_save(user_id: str, owned: list[str]) -> dict[str, Any]:
 async def game_transform(body: TransformIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     profile = await ensure_profile(user["user_id"])
     owned = list(profile.get("owned_packs") or [])
-    if VAMPIRE_PACK not in owned:
-        raise HTTPException(status_code=403, detail="The Thirst is not yours yet.")
+    requested = (body.species or "vampire").strip().lower()
+    if requested not in SPECIES_PACKS:
+        raise HTTPException(status_code=400, detail="That change is not on offer.")
+    if SPECIES_PACKS[requested] not in owned:
+        detail = {
+            "vampire": "The Thirst is not yours yet.",
+            "lycanthrope": "The Moon is not yours yet.",
+            "witch": "The Craft is not yours yet.",
+        }[requested]
+        raise HTTPException(status_code=403, detail=detail)
     save = await living_save(user["user_id"], owned)
     character = save["character"]
     if character.get("species") == "vampire":
         raise HTTPException(status_code=409, detail="The blood is already in you.")
     if character.get("species") != "human":
-        raise HTTPException(status_code=409, detail="Only a human life can take the blood.")
+        raise HTTPException(status_code=409, detail="This life has already changed.")
     if int(character["age_years"]) < 13:
         raise HTTPException(status_code=403, detail="The change waits until thirteen.")
-    character["species"] = "vampire"
-    character["species_data"] = fresh_vampire_data(body.clan)
-    character["life_log"].append(f"Age {character['age_years']}: The blood took. {character['species_data']['clan']} will know the name.")
+    character["species"], character["species_data"] = species_payload(requested, body.clan, body.subtype)
+    data = character["species_data"] or {}
+    if requested == "vampire":
+        line = f"Age {character['age_years']}: The blood took. {data.get('clan')} will know the name."
+    elif requested == "lycanthrope":
+        line = f"Age {character['age_years']}: The bite took. The {data.get('subtype')} will answer the moon."
+    else:
+        line = f"Age {character['age_years']}: The working woke. {data.get('coven', {}).get('name', 'The coven')} will know the name."
+    character["life_log"].append(line)
     trim_log(character["life_log"])
     await persist_save(save)
     return {"save": client_save(save)}
@@ -2030,22 +2394,29 @@ async def game_supernatural(body: SupernaturalIn, user: dict[str, Any] = Depends
     owned = list(profile.get("owned_packs") or [])
     save = await living_save(user["user_id"], owned)
     character = save["character"]
-    if character.get("species") != "vampire" or not isinstance(character.get("species_data"), dict):
+    species = character.get("species")
+    if species not in SPECIES_ACTIONS or not isinstance(character.get("species_data"), dict):
         raise HTTPException(status_code=409, detail="This life does not walk the blood.")
-    action = VAMPIRE_ACTIONS.get(body.action)
+    action = SPECIES_ACTIONS[species].get(body.action)
     if not action:
         raise HTTPException(status_code=400, detail="That is not a power you hold.")
     data = character["species_data"]
     age = int(character["age_years"])
     if data.get("last_power_age") == age:
         raise HTTPException(status_code=409, detail="You already spent this year's power.")
+    pending = {key: action[key] for key in SPECIES_EFFECT_KEYS if key in action}
+    if int(pending.get("mana") or 0) < 0 and int(data.get("mana") or 0) + int(pending["mana"]) < 0:
+        raise HTTPException(status_code=409, detail="You do not have the mana for that.")
     data["last_power_age"] = age
-    apply_species_effects(
-        character,
-        {key: action[key] for key in ("bloodlust", "masquerade", "hunter_heat") if key in action},
-    )
-    if "health" in action:
-        character["stats"]["health"] = clamp(int(character["stats"]["health"]) + int(action["health"]))
+    apply_species_effects(character, pending)
+    for stat, delta in action.items():
+        if stat not in STAT_KEYS:
+            continue
+        amount = int(delta)
+        if stat == "money":
+            character["stats"][stat] = clamp_money(int(character["stats"][stat]) + amount)
+        else:
+            character["stats"][stat] = clamp(int(character["stats"][stat]) + amount)
     outcome = str(action["outcome"])
     character["life_log"].append(f"Age {age}: {outcome}")
     trim_log(character["life_log"])

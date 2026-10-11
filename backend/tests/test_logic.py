@@ -1,4 +1,5 @@
 from server import (
+    LYCAN_SUBTYPES,
     _migrate_character,
     _sanitize_event,
     advance_life,
@@ -153,6 +154,60 @@ def test_species_effects_apply_only_to_vampires():
     assert vampire["species_data"]["clan"] == "Red Ledger"
     assert vampire["species_data"]["bloodlust"] == 40
     assert vampire["species_data"]["masquerade"] == 62
+
+
+def test_full_moon_with_low_control_raises_hunter_heat():
+    character = fresh_character("Ada", "stable", [], species="lycanthrope", subtype="wolf")
+    character["age_years"] = 4
+    character["species_data"]["control"] = 20
+    character["hunter_heat"] = 0
+    reputation = character["stats"]["reputation"]
+    health = character["stats"]["health"]
+    cause = advance_life(character, [])
+    assert character["age_years"] == 5
+    assert character["species_data"]["moon"] == 100
+    assert character["hunter_heat"] == 16
+    assert character["stats"]["reputation"] < reputation
+    assert character["stats"]["health"] < health
+    assert character["species_data"]["control"] == 14
+    assert cause is None
+
+
+def test_high_notoriety_year_raises_hunter_heat():
+    character = fresh_character("Ada", "stable", [], species="witch")
+    character["species_data"]["notoriety"] = 80
+    character["species_data"]["mana"] = 30
+    character["hunter_heat"] = 4
+    cause = advance_life(character, [])
+    assert character["hunter_heat"] == 12
+    assert character["species_data"]["mana"] == 42
+    assert cause is None
+
+
+def test_moon_and_notoriety_effects_stay_on_their_species():
+    lycan = fresh_character("Ada", "stable", [], species="lycanthrope", subtype="stag")
+    apply_choice(lycan, {"effects": {}, "flags": {}, "species_effects": {"control": -10, "mana": 20, "hunter_heat": 3}})
+    assert lycan["species_data"]["subtype"] == "stag"
+    assert lycan["species_data"]["control"] == 54
+    assert "mana" not in lycan["species_data"]
+    assert lycan["hunter_heat"] == 3
+    witch = fresh_character("Ada", "stable", [], species="witch")
+    apply_choice(witch, {"effects": {}, "flags": {}, "species_effects": {"notoriety": 20, "moon": 40}})
+    assert witch["species_data"]["notoriety"] == 32
+    assert "moon" not in witch["species_data"]
+
+
+def test_migrate_fills_lycan_and_witch_meters():
+    lycan = _migrate_character({"name": "Ada", "age_years": 16, "stats": {}, "flags": {}, "species": "lycanthrope"})
+    assert lycan["species_data"]["subtype"] in LYCAN_SUBTYPES
+    assert lycan["species_data"]["pack"] is None
+    assert lycan["species_data"]["last_power_age"] is None
+    witch = _migrate_character(
+        {"name": "Bea", "age_years": 20, "stats": {}, "flags": {}, "species": "witch", "species_data": {"notoriety": 140}}
+    )
+    assert witch["species_data"]["notoriety"] == 100
+    assert witch["species_data"]["coven"] is None
+    assert witch["hunter_heat"] == 0
 
 
 def test_sanitize_rejects_a_thin_event():

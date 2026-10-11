@@ -41,8 +41,18 @@ export type Choice = {
   fatal?: boolean;
   child_born?: boolean;
   child_name?: string;
-  species_effects?: { bloodlust?: number; masquerade?: number; hunter_heat?: number };
+  species_effects?: {
+    bloodlust?: number;
+    masquerade?: number;
+    hunter_heat?: number;
+    moon?: number;
+    control?: number;
+    mana?: number;
+    notoriety?: number;
+  };
 };
+
+export type Circle = { name: string; members: string[] };
 
 export type VampireData = {
   clan: string;
@@ -50,6 +60,23 @@ export type VampireData = {
   masquerade: number;
   last_power_age: number | null;
 };
+
+export type LycanData = {
+  subtype: string;
+  moon: number;
+  control: number;
+  pack: Circle | null;
+  last_power_age: number | null;
+};
+
+export type WitchData = {
+  mana: number;
+  notoriety: number;
+  coven: Circle | null;
+  last_power_age: number | null;
+};
+
+export type SpeciesData = VampireData | LycanData | WitchData;
 
 export type GameEvent = { title: string; narrative: string; choices: Choice[] };
 
@@ -68,7 +95,7 @@ export type Character = {
   career: Career;
   business: Business;
   species: string;
-  species_data: VampireData | null;
+  species_data: SpeciesData | null;
   hunter_heat: number;
   applied_grants: string[];
 };
@@ -133,7 +160,11 @@ export function useBackgrounds() {
   return useQuery({
     queryKey: ["game", "backgrounds"],
     queryFn: () =>
-      api<{ backgrounds: { key: string; label: string; blurb: string }[]; vampire_clans: string[] }>("/api/game/backgrounds"),
+      api<{
+        backgrounds: { key: string; label: string; blurb: string }[];
+        vampire_clans: string[];
+        lycan_subtypes: string[];
+      }>("/api/game/backgrounds"),
     enabled: status === "user",
   });
 }
@@ -183,7 +214,7 @@ export function useNewGame() {
   const refresh = useInvalidateLife();
   const client = useGameClient();
   return useMutation({
-    mutationFn: (body: { name: string; background_key: string; species?: string; clan?: string }) =>
+    mutationFn: (body: { name: string; background_key: string; species?: string; clan?: string; subtype?: string }) =>
       api<{ save: Save }>("/api/game/new", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: async (data) => {
       client.setQueryData(["game", "state"], data);
@@ -224,8 +255,8 @@ export function useAbandon() {
 export function useTransform() {
   const refresh = useInvalidateLife();
   return useMutation({
-    mutationFn: (clan: string) =>
-      api<{ save: Save }>("/api/game/transform", { method: "POST", body: JSON.stringify({ clan }) }),
+    mutationFn: (body: { species: string; clan?: string; subtype?: string }) =>
+      api<{ save: Save }>("/api/game/transform", { method: "POST", body: JSON.stringify(body) }),
     onSuccess: refresh,
   });
 }
