@@ -41,6 +41,15 @@ BLOODLUST_YEARLY = 12
 MANA_YEARLY = 12
 HUNTER_DEATH_AT = 100
 HUNTER_DEATH_CAUSE = "Hunters closed the account. The body was found in the open."
+PARTNER_MIN_AGE = 16
+BOND_START = 55
+BOND_COURT = 12
+BOND_MARRY = 18
+BOND_TEND = 16
+BOND_NEGLECT_AFTER = 3
+BOND_NEGLECT_DROP = 5
+BOND_BREAK_AT = 20
+PARTNER_STATUSES = ("dating", "married")
 SPECIES_EFFECT_KEYS = ("bloodlust", "masquerade", "hunter_heat", "moon", "control", "mana", "notoriety")
 PACK_TITLES = ("Grey Acre", "The Low Road", "Salt Line", "Hearth Kin", "The Quiet Mile")
 COVEN_TITLES = ("The Closed Kitchen", "Lantern House", "The Third Stair", "Brine and Thread", "The Unlit Room")
@@ -392,6 +401,13 @@ def choice(
     for key in ("milestone", "fatal", "child_born", "child_name"):
         if extra.get(key) is not None:
             row[key] = extra[key]
+    if extra.get("partner_end") is True:
+        row["partner_end"] = True
+    incoming = extra.get("partner_set")
+    if isinstance(incoming, dict) and incoming.get("status") in PARTNER_STATUSES:
+        partner_name = clean_name(str(incoming.get("name") or ""), "")
+        if partner_name:
+            row["partner_set"] = {"name": partner_name, "status": incoming["status"]}
     block = extra.get("species_effects")
     if isinstance(block, dict):
         row["species_effects"] = {
@@ -1153,10 +1169,146 @@ NOTORIETY_EVENTS: list[dict[str, Any]] = [
 ]
 
 
+def meet_event() -> dict[str, Any]:
+    return event(
+        "Someone stays for breakfast",
+        "They were going to leave before the kettle. They are still here.",
+        [
+            choice(
+                "Ask them to stay",
+                "A second cup becomes a second key.",
+                {"happiness": 6, "family": 3},
+                {"charisma": 2},
+                partner_set={"name": "June", "status": "dating"},
+            ),
+            choice("Let the morning end", "You walk them to the door and mean it.", {"happiness": -1}, {"honesty": 2}),
+        ],
+    )
+
+
+def court_event(partner: dict[str, Any]) -> dict[str, Any]:
+    name = str(partner["name"])
+    return event(
+        "The long way around",
+        f"{name} waits where you walk. It has stopped being an accident.",
+        [
+            choice(
+                "Walk with them",
+                f"The route gets longer, and {name} is the reason.",
+                {"happiness": 4, "family": 2},
+                {"charisma": 1},
+                partner_set={"name": name, "status": "dating"},
+            ),
+            choice(
+                "Step back",
+                "You keep the evenings you already had.",
+                {"happiness": -3},
+                {"honesty": 2},
+                partner_end=True,
+            ),
+        ],
+    )
+
+
+def marry_event(partner: dict[str, Any]) -> dict[str, Any]:
+    name = str(partner["name"])
+    return event(
+        "A date with a witness",
+        f"{name} asks what the two of you are when someone else is in the room.",
+        [
+            choice(
+                "Marry them",
+                "The record gets a second name.",
+                {"happiness": 6, "family": 6},
+                {"honesty": 2},
+                partner_set={"name": name, "status": "married"},
+                milestone=f"Married {name}.",
+            ),
+            choice(
+                "Stay as you are",
+                "You keep the life without the paper.",
+                {"happiness": 1},
+                {"honesty": 1},
+                partner_set={"name": name, "status": "dating"},
+            ),
+        ],
+    )
+
+
+def household_event(partner: dict[str, Any]) -> dict[str, Any]:
+    name = str(partner["name"])
+    return event(
+        "The same kitchen",
+        f"{name} is already up. The year will be whatever you do with that.",
+        [
+            choice(
+                "Stay",
+                "The morning is ordinary, which is the point.",
+                {"happiness": 3, "family": 3},
+                partner_set={"name": name, "status": "married"},
+            ),
+            choice(
+                "Leave",
+                "You pack one bag and tell the truth on the way out.",
+                {"happiness": -5, "family": -4},
+                partner_end=True,
+            ),
+        ],
+    )
+
+
+def breakup_event(partner: dict[str, Any]) -> dict[str, Any]:
+    name = str(partner["name"])
+    status = partner.get("status") if partner.get("status") in PARTNER_STATUSES else "dating"
+    return event(
+        "The quiet gets a vote",
+        f"You and {name} have been in the same rooms and not in the same story.",
+        [
+            choice(
+                "Let them go",
+                "The key comes back. The name stays in the old years.",
+                {"happiness": -4, "family": -3},
+                partner_end=True,
+            ),
+            choice(
+                "Ask them to stay",
+                "You say the neglected thing out loud.",
+                {"happiness": 2, "family": 2},
+                partner_set={"name": name, "status": status},
+            ),
+        ],
+    )
+
+
+def partner_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
+    """The next partner beat, when the life is due for one. Ordinary years return None."""
+    age = int(character["age_years"])
+    if age < PARTNER_MIN_AGE:
+        return None
+    partner = character.get("partner") if isinstance(character.get("partner"), dict) else None
+    if partner and int(partner.get("bond") or 0) <= BOND_BREAK_AT:
+        return breakup_event(partner)
+    chapter = character.get("partner_chapter")
+    if not partner:
+        if age == 18 or (age > 18 and (age - 18) % 6 == 0):
+            return meet_event()
+        return None
+    if chapter == "court":
+        return court_event(partner)
+    if chapter == "marry":
+        return marry_event(partner)
+    if chapter == "house":
+        return household_event(partner)
+    return None
+
+
 def fallback_event(character: dict, history: list[dict[str, Any]], generation: int) -> dict[str, Any]:
     age = int(character["age_years"])
     if age >= 100:
         return closing_event(character)
+    due = partner_fallback(character)
+    if due:
+        return copy.deepcopy(due)
     stage = character.get("stage") or stage_for(age)
     pool = list(EVENTS.get(stage) or EVENTS["adult"])
     data = character.get("species_data") if isinstance(character.get("species_data"), dict) else {}
@@ -1329,6 +1481,8 @@ def fresh_character(
         "unlocked_paths": [],
         "children": [],
         "partner": None,
+        "partner_seen_age": None,
+        "partner_chapter": None,
         "career": None,
         "business": None,
         "species": born,
@@ -1381,6 +1535,8 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
         "unlocked_paths": [],
         "children": [],
         "partner": None,
+        "partner_seen_age": None,
+        "partner_chapter": None,
         "career": None,
         "business": business,
         "species": "human",
@@ -1424,7 +1580,17 @@ def _migrate_character(character: dict[str, Any]) -> dict[str, Any]:
     character.setdefault("life_log", [])
     character.setdefault("unlocked_paths", [])
     character.setdefault("children", [])
-    character.setdefault("partner", None)
+    character["partner"] = _clean_partner(character.get("partner"))
+    character.setdefault("partner_seen_age", None)
+    character.setdefault("partner_chapter", None)
+    if character["partner"] is None:
+        character["partner_seen_age"] = None
+        character["partner_chapter"] = None
+    else:
+        if not isinstance(character.get("partner_seen_age"), int):
+            character["partner_seen_age"] = int(character["age_years"])
+        if character.get("partner_chapter") not in ("court", "marry", "house", "settled"):
+            character["partner_chapter"] = "settled"
     character.setdefault("career", None)
     character.setdefault("business", None)
     character.setdefault("species", "human")
@@ -1492,6 +1658,69 @@ def marks_for_life(character: dict[str, Any], generation: int) -> int:
     return 50 + (reputation // 2) + (age // 2) + int(generation) * 10
 
 
+def _clean_partner(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    name = clean_name(str(raw.get("name") or ""), "")
+    if not name:
+        return None
+    status = raw.get("status") if raw.get("status") in PARTNER_STATUSES else "dating"
+    try:
+        bond = int(raw.get("bond", BOND_START))
+    except (TypeError, ValueError):
+        bond = BOND_START
+    return {"name": name, "status": status, "bond": clamp(bond)}
+
+
+def _partner_now(character: dict[str, Any]) -> dict[str, Any] | None:
+    partner = character.get("partner")
+    return partner if isinstance(partner, dict) and partner.get("name") else None
+
+
+def apply_partner(character: dict[str, Any], picked: dict[str, Any]) -> None:
+    """The only writer for character.partner. Marriage sticks only after dating."""
+    age = int(character["age_years"])
+    current = _partner_now(character)
+    if picked.get("partner_end") is True:
+        if current:
+            character["life_log"].append(f"Age {age}: {current['name']} left the record.")
+        character["partner"] = None
+        character["partner_seen_age"] = None
+        character["partner_chapter"] = None
+        return
+    incoming = picked.get("partner_set")
+    if not isinstance(incoming, dict) or age < PARTNER_MIN_AGE:
+        return
+    name = clean_name(str(incoming.get("name") or ""), "")
+    status = incoming.get("status")
+    if not name or status not in PARTNER_STATUSES:
+        return
+    if status == "married":
+        if not current or current.get("status") != "dating" or current.get("name") != name:
+            if current and current.get("status") == "married" and current.get("name") == name:
+                current["bond"] = clamp(int(current.get("bond") or 0) + BOND_TEND)
+                character["partner_seen_age"] = age
+                character["partner_chapter"] = "settled"
+            return
+        current["status"] = "married"
+        current["bond"] = clamp(int(current.get("bond") or 0) + BOND_MARRY)
+        character["partner_seen_age"] = age
+        character["partner_chapter"] = "house"
+        character["life_log"].append(f"Age {age}: Married {name}.")
+        return
+    if current and current.get("name") == name:
+        current["bond"] = clamp(int(current.get("bond") or 0) + BOND_COURT)
+        character["partner_seen_age"] = age
+        character["partner_chapter"] = "marry" if character.get("partner_chapter") == "court" else "settled"
+        return
+    if current and current.get("status") == "married":
+        return
+    character["partner"] = {"name": name, "status": "dating", "bond": BOND_START}
+    character["partner_seen_age"] = age
+    character["partner_chapter"] = "court"
+    character["life_log"].append(f"Age {age}: Met {name}.")
+
+
 def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
     for stat, delta in (picked.get("effects") or {}).items():
         if stat not in STAT_KEYS:
@@ -1505,19 +1734,22 @@ def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
         if flag not in FLAG_KEYS:
             continue
         character["flags"][flag] = clamp(int(character["flags"][flag]) + clamp_delta(delta, 40))
+    apply_partner(character, picked)
     if picked.get("child_born") and int(character["age_years"]) >= 16:
         existing = character["children"]
         fallback = CHILD_NAMES[len(existing) % len(CHILD_NAMES)]
         child_name = clean_name(picked.get("child_name"), fallback)
         if child_name == "Unnamed":
             child_name = fallback
-        character["children"].append(
-            {
-                "id": str(uuid.uuid4()),
-                "name": child_name,
-                "born_parent_age": int(character["age_years"]),
-            }
-        )
+        child = {
+            "id": str(uuid.uuid4()),
+            "name": child_name,
+            "born_parent_age": int(character["age_years"]),
+        }
+        parent = _partner_now(character)
+        if parent:
+            child["other_parent"] = parent["name"]
+        character["children"].append(child)
         character["stats"]["family"] = clamp(int(character["stats"]["family"]) + 8)
     apply_species_effects(character, picked.get("species_effects"))
 
@@ -1574,6 +1806,21 @@ def apply_species_effects(character: dict[str, Any], effects: Any) -> None:
             add_notoriety(character, int(effects["notoriety"]))
 
 
+def tick_partner(character: dict[str, Any]) -> None:
+    """Years without a partner beat cool the bond. A very low bond is a breakup year."""
+    partner = _partner_now(character)
+    if not partner:
+        return
+    age = int(character["age_years"])
+    seen = character.get("partner_seen_age")
+    if not isinstance(seen, int):
+        character["partner_seen_age"] = age
+        return
+    if age - seen < BOND_NEGLECT_AFTER:
+        return
+    partner["bond"] = clamp(int(partner.get("bond") or 0) - BOND_NEGLECT_DROP)
+
+
 def hunter_pressure(character: dict[str, Any]) -> str | None:
     if character.get("species") in SPECIES_PACKS and int(character.get("hunter_heat") or 0) >= HUNTER_DEATH_AT:
         return HUNTER_DEATH_CAUSE
@@ -1624,6 +1871,7 @@ def advance_life(character: dict[str, Any], owned_packs: list[str]) -> str | Non
         tick_lycanthrope(character)
     elif species == "witch":
         tick_witch(character)
+    tick_partner(character)
     apply_owned_grants(character, owned_packs)
     character["unlocked_paths"] = compute_paths(character, owned_packs)
     return hunter_pressure(character)
@@ -1698,15 +1946,22 @@ def obituary(save: dict[str, Any]) -> str:
     return f"{name} died at {age}. {cause}.{spouse} {tail}".strip()
 
 
+def partner_record(character: dict[str, Any]) -> dict[str, str] | None:
+    partner = _partner_now(character)
+    if not partner:
+        return None
+    status = partner.get("status") if partner.get("status") in PARTNER_STATUSES else "dating"
+    return {"name": str(partner["name"]), "status": status}
+
+
 def epitaph(save: dict[str, Any], heir_id: str, heir_name: str) -> dict[str, Any]:
     character = save["character"]
-    partner = character.get("partner") if isinstance(character.get("partner"), dict) else None
     return {
         "generation": int(save["generation"]),
         "name": character["name"],
         "years": f"0–{character['age_years']}",
         "cause_of_death": save.get("cause_of_death"),
-        "partner": partner.get("name") if partner else None,
+        "partner": partner_record(character),
         "heir_id": heir_id,
         "heir_name": heir_name,
         "epitaph": obituary(save),
@@ -1749,6 +2004,13 @@ def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | Non
             row["child_born"] = True
             if isinstance(item.get("child_name"), str) and item["child_name"].strip():
                 row["child_name"] = clean_name(item["child_name"])
+        if item.get("partner_end") is True:
+            row["partner_end"] = True
+        incoming = item.get("partner_set")
+        if isinstance(incoming, dict) and int(character["age_years"]) >= PARTNER_MIN_AGE and incoming.get("status") in PARTNER_STATUSES:
+            partner_name = clean_name(str(incoming.get("name") or ""), "")
+            if partner_name:
+                row["partner_set"] = {"name": partner_name, "status": incoming["status"]}
         species_effects: dict[str, int] = {}
         raw_species = item.get("species_effects")
         if isinstance(raw_species, dict):
@@ -1788,6 +2050,7 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         "owned_cosmetics": unlocked["cosmetics"],
         "children": character.get("children") or [],
         "partner": character.get("partner"),
+        "other_parent": (_partner_now(character) or {}).get("name"),
         "career": character.get("career"),
         "business": character.get("business"),
         "life_story_so_far": (character.get("life_log") or [])[-24:],
@@ -1811,13 +2074,15 @@ Return ONLY a JSON object with this shape:
       "fatal": false,
       "child_born": false,
       "child_name": null,
+      "partner_set": null,
+      "partner_end": false,
       "species_effects": {"bloodlust": 0, "masquerade": 0, "hunter_heat": 0, "moon": 0, "control": 0, "mana": 0, "notoriety": 0}
     }
   ]
 }
 Rules:
 - 2 to 4 choices. Each must change the life in a different direction.
-- Continuity: use the name, age, flags, children, species, subtype, pack, coven, and life_story_so_far. Do not contradict them.
+- Continuity: use the name, age, flags, children, partner, species, subtype, pack, coven, and life_story_so_far. Do not contradict them.
 - Never repeat a title or situation from recent_years.
 - If unlocked_paths or owned_careers are present, let some years branch into them. Ignore empty lists.
 - When species is not human, write the year through that body.
@@ -1828,7 +2093,14 @@ Rules:
 - Imply mature trouble (debt, desire, addiction, violence, hustles) by consequence, never by instruction.
 - No explicit sexual content. No graphic injury. No real-world how-to for crime, drugs, or self-harm.
 - fatal may be true only in late life, when health is already collapsing, or when hunter_heat is already 70 or higher and age is at least 13.
-- child_born only if age is at least 18, and at most one choice should offer it.
+- child_born only if age is at least 18, and at most one choice should offer it. If partner is set, that partner is the other parent: name them in the narrative.
+- partner is null or {name, status, bond}. status is "dating" or "married". bond is 0–100 and is not yours to set; the year only starts, keeps, or ends the partnership.
+- From age 16, a year may meet someone with partner_set {name, status: "dating"} when partner is null. Use one plain first name.
+- Court the person already dating you with partner_set using that same name and status "dating".
+- partner_set status "married" only applies when partner.status is already "dating" and the name is theirs. Otherwise omit it.
+- partner_end true ends the partnership. Do not also set a partner on that choice.
+- If bond is 20 or lower, write a year in which the partnership might end: one choice stays, one choice leaves.
+- Meet, court, marry, and breakup years should be concrete and store-safe. No explicit sexual content.
 - Deltas are small integers. Money may move by hundreds, not millions.
 - Do not mention Legacy Marks, menus, or that this is a game.
 """

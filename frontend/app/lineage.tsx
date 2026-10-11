@@ -3,7 +3,13 @@ import { ScrollView, Text, View } from "react-native";
 
 import { GhostButton, Screen, StatLine } from "../src/components/game-ui";
 import { fonts, makeStyles } from "../src/theme";
-import { useGameState } from "../src/use-game";
+import { useGameState, type LineageEntry } from "../src/use-game";
+
+function partnerText(partner: NonNullable<LineageEntry["partner"]>): string {
+  if (typeof partner === "string") return partner;
+  const status = partner.status === "married" ? "Married" : "Dating";
+  return `${partner.name} · ${status}`;
+}
 
 const useStyles = makeStyles((palette) => ({
   scroll: { paddingHorizontal: 24, paddingBottom: 32 },
@@ -49,7 +55,7 @@ export default function LineageScreen() {
             <Text style={styles.body}>{entry.epitaph}</Text>
             <StatLine label="Years" value={entry.years} />
             <StatLine label="Continued as" value={entry.heir_name} />
-            {entry.partner ? <StatLine label="Partner" value={entry.partner} /> : null}
+            {entry.partner ? <StatLine label="Partner" value={partnerText(entry.partner)} /> : null}
           </View>
         ))}
         {save ? (
@@ -60,6 +66,12 @@ export default function LineageScreen() {
               Age {save.character.age_years}. {save.character.background}
             </Text>
             <StatLine label="Children" value={save.character.children.length} />
+            {save.character.partner ? (
+              <StatLine
+                label={save.character.partner.status === "married" ? "Married" : "Dating"}
+                value={save.character.partner.name}
+              />
+            ) : null}
           </View>
         ) : null}
         <GhostButton testID="lineage-back-button" label="Back to the year" onPress={() => router.back()} />

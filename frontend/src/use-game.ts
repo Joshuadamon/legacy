@@ -26,7 +26,7 @@ export type Flags = {
   resilience: number;
 };
 
-export type Child = { id: string; name: string; born_parent_age: number };
+export type Child = { id: string; name: string; born_parent_age: number; other_parent?: string };
 
 export type Partner = { name: string; status: "dating" | "married"; bond: number } | null;
 export type Career = { title: string; field: string; level: number; income: number } | null;
@@ -41,6 +41,8 @@ export type Choice = {
   fatal?: boolean;
   child_born?: boolean;
   child_name?: string;
+  partner_set?: { name: string; status: "dating" | "married" };
+  partner_end?: boolean;
   species_effects?: {
     bloodlust?: number;
     masquerade?: number;
@@ -107,7 +109,7 @@ export type LineageEntry = {
   name: string;
   years: string;
   cause_of_death: string | null;
-  partner: string | null;
+  partner: { name: string; status: "dating" | "married" } | string | null;
   heir_id: string;
   heir_name: string;
   epitaph: string;

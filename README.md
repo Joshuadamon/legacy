@@ -40,7 +40,8 @@ From `frontend`, `npm run lint` is `tsc --noEmit`.
 - Birth to death, personality flags, paths, heirs, lineage, save migration
 - Legacy Marks: 250 to start, a grant on death, a store of career, skill, cosmetic, lifestyle, and supernatural packs
 - Owned skill packs change the living character once per life. Career packs open fields in the year prompt. The Thirst, the Moon, and the Craft are playable: a birth, or a turn after thirteen. Hunger, a full moon with low control, and flashy magic can draw hunters
+- A partner can be met, kept, married, or lost. The person at your side is the other parent, and their name and status stay on the death record
 
 ## Next
 
-Vampire meters end to end, then lycanthrope and witch, then marriage, careers and inherited businesses, the family tree, and skipping a few childhood years.
+Careers and inherited businesses, the family tree, and skipping a few childhood years.

@@ -12,6 +12,7 @@ import {
   StatLine,
   Toast,
   hapticError,
+  hapticTap,
   moneyLabel,
 } from "../src/components/game-ui";
 import { colors, fonts, makeStyles } from "../src/theme";
@@ -175,6 +176,11 @@ function asWitch(save: Save): WitchData | null {
   return data;
 }
 
+function howTheyMet(log: string[], name: string): string {
+  const line = log.find((entry) => entry.includes(name));
+  return line ?? "The record does not say how you met.";
+}
+
 function clanSlug(clan: string): string {
   return clan.toLowerCase().replace(/\s+/g, "-");
 }
@@ -194,6 +200,7 @@ export default function GameScreen() {
   const powersRef = useRef<BottomSheetModal>(null);
   const snaps = useMemo(() => ["78%"], []);
   const [toast, setToast] = useState<string | null>(null);
+  const [partnerOpen, setPartnerOpen] = useState(false);
   const [clan, setClan] = useState("");
   const [subtype, setSubtype] = useState("");
   const [turnSpecies, setTurnSpecies] = useState<"vampire" | "lycanthrope" | "witch">("vampire");
@@ -341,6 +348,34 @@ export default function GameScreen() {
           <StatLine label="Money" value={moneyLabel(save.character.stats.money)} />
           <StatLine label="Reputation" value={save.character.stats.reputation} />
           <StatLine label="Family" value={save.character.stats.family} />
+          <Text style={styles.section}>PARTNER</Text>
+          {save.character.partner ? (
+            <>
+              <Pressable
+                testID="partner-row"
+                accessibilityRole="button"
+                onPress={() => {
+                  void hapticTap();
+                  setPartnerOpen((open) => !open);
+                }}
+              >
+                <StatLine
+                  label={save.character.partner.name}
+                  value={save.character.partner.status === "married" ? "Married" : "Dating"}
+                />
+              </Pressable>
+              <View style={styles.meters}>
+                <Meter label="Bond" value={save.character.partner.bond} />
+              </View>
+              {partnerOpen ? (
+                <Text testID="partner-detail" style={styles.note}>
+                  {howTheyMet(save.character.life_log, save.character.partner.name)}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.note}>No one is written beside you.</Text>
+          )}
           <Text style={styles.section}>FLAGS</Text>
           {FLAG_LABELS.map((flag) => (
             <StatLine key={flag.key} label={flag.label} value={save.character.flags[flag.key]} />
@@ -348,7 +383,15 @@ export default function GameScreen() {
           <Text style={styles.section}>CHILDREN</Text>
           {save.character.children.length === 0 ? <Text style={styles.note}>None yet.</Text> : null}
           {save.character.children.map((child) => (
-            <StatLine key={child.id} label={child.name} value={`born at ${child.born_parent_age}`} />
+            <StatLine
+              key={child.id}
+              label={child.name}
+              value={
+                child.other_parent
+                  ? `born at ${child.born_parent_age}, with ${child.other_parent}`
+                  : `born at ${child.born_parent_age}`
+              }
+            />
           ))}
           <Text style={styles.section}>OPEN TO YOU</Text>
           <Text style={styles.note}>
