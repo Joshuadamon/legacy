@@ -11,16 +11,19 @@ import { formatAge, useContinueHeir, useGameState, useHeirs } from "../src/use-g
 const useStyles = makeStyles((palette) => ({
   scroll: { paddingHorizontal: 24, paddingBottom: 36 },
   kicker: {
-    color: palette.accent,
+    color: palette.textMuted,
     fontFamily: fonts.uiMedium,
     letterSpacing: 1.4,
     fontSize: 12,
     marginTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: palette.gold,
+    paddingTop: 12,
   },
   title: { color: palette.text, fontFamily: fonts.display, fontSize: 34, marginVertical: 8 },
   obituary: { color: palette.text, fontFamily: fonts.body, fontSize: 17, lineHeight: 26, marginBottom: 16 },
-  earned: { color: palette.accent, fontFamily: fonts.uiMedium, fontSize: 18, marginBottom: 6 },
-  balance: { color: palette.textMuted, fontFamily: fonts.ui, fontSize: 15, marginBottom: 20 },
+  earned: { color: palette.bone, fontFamily: fonts.uiMedium, fontSize: 18, marginBottom: 6 },
+  balance: { color: palette.bone, fontFamily: fonts.ui, fontSize: 15, marginBottom: 20 },
   input: {
     borderColor: palette.line,
     borderWidth: 1,

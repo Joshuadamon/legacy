@@ -12,11 +12,14 @@ import { useBackgrounds, useNewGame, useProfile } from "../src/use-game";
 const useStyles = makeStyles((palette) => ({
   scroll: { paddingHorizontal: 24, paddingBottom: 32 },
   kicker: {
-    color: palette.accent,
+    color: palette.textMuted,
     fontFamily: fonts.uiMedium,
     letterSpacing: 1.4,
     fontSize: 12,
     marginTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: palette.gold,
+    paddingTop: 12,
   },
   title: {
     color: palette.text,
@@ -51,8 +54,8 @@ const useStyles = makeStyles((palette) => ({
     marginBottom: 10,
     backgroundColor: palette.surface,
   },
-  cardOn: { borderColor: palette.accent },
-  cardTitle: { color: palette.text, fontFamily: fonts.uiMedium, fontSize: 17 },
+  cardOn: { borderColor: palette.gold },
+  cardTitle: { color: palette.text, fontFamily: fonts.display, fontSize: 20 },
   cardBody: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, marginTop: 4 },
   chips: { flexDirection: "row", gap: 8, paddingVertical: 4 },
   chip: {
@@ -63,8 +66,9 @@ const useStyles = makeStyles((palette) => ({
     paddingVertical: 8,
     backgroundColor: palette.surface,
   },
-  chipOn: { borderColor: palette.accent },
+  chipOn: { borderColor: palette.gold, backgroundColor: palette.surfaceRaised },
   chipText: { color: palette.text, fontFamily: fonts.ui, fontSize: 15 },
+  chipTextOn: { color: palette.gold },
 }));
 
 export default function CreateScreen() {
@@ -140,7 +144,7 @@ export default function CreateScreen() {
                     onPress={() => setSpecies(item.id)}
                     style={[styles.chip, selected ? styles.chipOn : null]}
                   >
-                    <Text style={styles.chipText}>{item.label}</Text>
+                    <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{item.label}</Text>
                   </Pressable>
                 );
               })}
@@ -159,7 +163,7 @@ export default function CreateScreen() {
                       onPress={() => setClan(item)}
                       style={[styles.chip, selected ? styles.chipOn : null]}
                     >
-                      <Text style={styles.chipText}>{item}</Text>
+                      <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{item}</Text>
                     </Pressable>
                   );
                 })}
@@ -178,7 +182,7 @@ export default function CreateScreen() {
                       onPress={() => setSubtype(item)}
                       style={[styles.chip, selected ? styles.chipOn : null]}
                     >
-                      <Text style={styles.chipText}>{item}</Text>
+                      <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{item}</Text>
                     </Pressable>
                   );
                 })}

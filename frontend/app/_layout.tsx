@@ -38,7 +38,7 @@ function Gate() {
   if (status === "loading") {
     return (
       <View style={styles.boot}>
-        <ActivityIndicator color={colors.accent} />
+        <ActivityIndicator color={colors.ember} />
       </View>
     );
   }
@@ -65,7 +65,7 @@ export default function RootLayout() {
   if (!fontsLoaded) {
     return (
       <View style={styles.boot}>
-        <ActivityIndicator color={colors.accent} />
+        <ActivityIndicator color={colors.ember} />
       </View>
     );
   }

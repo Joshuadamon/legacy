@@ -76,7 +76,7 @@ const useStyles = makeStyles((palette) => ({
   scroll: { paddingHorizontal: 22, paddingBottom: 24 },
   topRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 12 },
   name: { color: palette.text, fontFamily: fonts.display, fontSize: 28 },
-  money: { color: palette.accent, fontFamily: fonts.uiMedium, fontSize: 18, marginTop: 8 },
+  money: { color: palette.text, fontFamily: fonts.uiMedium, fontSize: 18, marginTop: 8 },
   meta: { color: palette.textMuted, fontFamily: fonts.ui, fontSize: 14, marginTop: 4, marginBottom: 16 },
   meters: { gap: 10, marginBottom: 18 },
   outcome: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, marginBottom: 14 },
@@ -98,7 +98,7 @@ const useStyles = makeStyles((palette) => ({
     paddingHorizontal: 16,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: palette.line,
+    borderTopColor: palette.gold,
   },
   passing: {
     ...StyleSheetAbsolute,
@@ -110,15 +110,18 @@ const useStyles = makeStyles((palette) => ({
   sheet: { paddingHorizontal: 22, paddingBottom: 28 },
   sheetTitle: { color: palette.text, fontFamily: fonts.display, fontSize: 28, marginBottom: 12 },
   section: {
-    color: palette.accent,
+    color: palette.textMuted,
     fontFamily: fonts.uiMedium,
     fontSize: 12,
     letterSpacing: 1.2,
     marginTop: 18,
     marginBottom: 6,
+    borderTopWidth: 1,
+    borderTopColor: palette.gold,
+    paddingTop: 10,
   },
   note: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, marginTop: 6 },
-  immortal: { color: palette.accent, fontFamily: fonts.uiMedium, fontSize: 14, marginTop: 8, letterSpacing: 0.4 },
+  immortal: { color: palette.gold, fontFamily: fonts.uiMedium, fontSize: 14, marginTop: 8, letterSpacing: 0.4 },
 
   chips: { flexDirection: "row", gap: 8, paddingVertical: 8 },
   chip: {
@@ -129,8 +132,9 @@ const useStyles = makeStyles((palette) => ({
     paddingVertical: 8,
     backgroundColor: palette.surface,
   },
-  chipOn: { borderColor: palette.accent },
+  chipOn: { borderColor: palette.gold, backgroundColor: palette.surfaceRaised },
   chipText: { color: palette.text, fontFamily: fonts.ui, fontSize: 15 },
+  chipTextOn: { color: palette.gold },
   powers: { gap: 10, marginTop: 12 },
   skipRow: { paddingHorizontal: 16, paddingTop: 4 },
   montageLine: {
@@ -141,7 +145,7 @@ const useStyles = makeStyles((palette) => ({
     marginBottom: 12,
   },
   changeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6 },
-  deltaUp: { color: palette.good, fontFamily: fonts.uiMedium, fontSize: 15 },
+  deltaUp: { color: palette.success, fontFamily: fonts.uiMedium, fontSize: 15 },
   deltaDown: { color: palette.danger, fontFamily: fonts.uiMedium, fontSize: 15 },
   deltaFlat: { color: palette.textMuted, fontFamily: fonts.uiMedium, fontSize: 15 },
 }));
@@ -382,7 +386,7 @@ export default function GameScreen() {
     return (
       <Screen>
         <View style={styles.passing}>
-          <ActivityIndicator color={colors.accent} />
+          <ActivityIndicator color={colors.ember} />
         </View>
       </Screen>
     );
@@ -449,21 +453,21 @@ export default function GameScreen() {
       </View>
       {choice.isPending ? (
         <View testID="year-passing" style={styles.passing}>
-          <ActivityIndicator color={colors.accent} />
+          <ActivityIndicator color={colors.ember} />
           <Text style={styles.passingText}>Three months pass...</Text>
         </View>
       ) : null}
       {skip.isPending ? (
         <View testID="years-passing" style={styles.passing}>
-          <ActivityIndicator color={colors.accent} />
+          <ActivityIndicator color={colors.ember} />
           <Text style={styles.passingText}>About three years pass...</Text>
         </View>
       ) : null}
       <BottomSheetModal
         ref={skipRef}
         snapPoints={["62%"]}
-        backgroundStyle={{ backgroundColor: colors.surface }}
-        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+        backgroundStyle={{ backgroundColor: colors.surfaceRaised }}
+        handleIndicatorStyle={{ backgroundColor: colors.gold }}
       >
         <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="skip-montage">
           <Text style={styles.sheetTitle}>About three years</Text>
@@ -492,8 +496,8 @@ export default function GameScreen() {
       <BottomSheetModal
         ref={lifeRef}
         snapPoints={snaps}
-        backgroundStyle={{ backgroundColor: colors.surface }}
-        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+        backgroundStyle={{ backgroundColor: colors.surfaceRaised }}
+        handleIndicatorStyle={{ backgroundColor: colors.gold }}
       >
         <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="life-sheet">
           <Text style={styles.sheetTitle}>{save.character.name}</Text>
@@ -620,6 +624,7 @@ export default function GameScreen() {
           <GhostButton
             testID="abandon-life-button"
             label="Abandon this life"
+            tone="danger"
             onPress={() => {
               lifeRef.current?.dismiss();
               abandonRef.current?.present();
@@ -631,8 +636,8 @@ export default function GameScreen() {
         ref={torchRef}
         snapPoints={snaps}
         onDismiss={() => setTorchOpen(false)}
-        backgroundStyle={{ backgroundColor: colors.surface }}
-        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+        backgroundStyle={{ backgroundColor: colors.surfaceRaised }}
+        handleIndicatorStyle={{ backgroundColor: colors.gold }}
       >
         <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="torch-sheet">
           <Text style={styles.sheetTitle}>Pass the torch</Text>
@@ -669,8 +674,8 @@ export default function GameScreen() {
       <BottomSheetModal
         ref={abandonRef}
         snapPoints={["36%"]}
-        backgroundStyle={{ backgroundColor: colors.surface }}
-        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+        backgroundStyle={{ backgroundColor: colors.surfaceRaised }}
+        handleIndicatorStyle={{ backgroundColor: colors.gold }}
       >
         <View style={styles.sheet} testID="abandon-sheet">
           <Text style={styles.sheetTitle}>Close the record?</Text>
@@ -680,6 +685,7 @@ export default function GameScreen() {
             testID="confirm-abandon-button"
             label={abandon.isPending ? "Closing..." : "Abandon"}
             disabled={abandon.isPending}
+            tone="danger"
             onPress={() => void closeRecord()}
           />
         </View>
@@ -687,8 +693,8 @@ export default function GameScreen() {
       <BottomSheetModal
         ref={powersRef}
         snapPoints={snaps}
-        backgroundStyle={{ backgroundColor: colors.surface }}
-        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+        backgroundStyle={{ backgroundColor: colors.surfaceRaised }}
+        handleIndicatorStyle={{ backgroundColor: colors.gold }}
       >
         <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="powers-sheet">
           <Text style={styles.sheetTitle}>
@@ -698,9 +704,9 @@ export default function GameScreen() {
             <>
               <Text style={styles.note}>{vampire.clan}</Text>
               <View style={styles.meters}>
-                <Meter label="Bloodlust" value={vampire.bloodlust} />
-                <Meter label="Masquerade" value={vampire.masquerade} />
-                <Meter label="Hunter heat" value={save.character.hunter_heat} />
+                <Meter label="Bloodlust" value={vampire.bloodlust} tone="blood" />
+                <Meter label="Masquerade" value={vampire.masquerade} tone="blood" />
+                <Meter label="Hunter heat" value={save.character.hunter_heat} tone="blood" />
               </View>
             </>
           ) : null}
@@ -709,9 +715,9 @@ export default function GameScreen() {
               <Text style={styles.note}>{lycan.subtype}</Text>
               <Text style={styles.note}>{circleLine(lycan.pack)}</Text>
               <View style={styles.meters}>
-                <Meter label="Moon" value={lycan.moon} />
+                <Meter label="Moon" value={lycan.moon} tone="moon" />
                 <Meter label="Control" value={lycan.control} />
-                <Meter label="Hunter heat" value={save.character.hunter_heat} />
+                <Meter label="Hunter heat" value={save.character.hunter_heat} tone="blood" />
               </View>
             </>
           ) : null}
@@ -721,7 +727,7 @@ export default function GameScreen() {
               <View style={styles.meters}>
                 <Meter label="Mana" value={witch.mana} />
                 <Meter label="Notoriety" value={witch.notoriety} />
-                <Meter label="Hunter heat" value={save.character.hunter_heat} />
+                <Meter label="Hunter heat" value={save.character.hunter_heat} tone="blood" />
               </View>
             </>
           ) : null}
@@ -761,7 +767,7 @@ export default function GameScreen() {
                             onPress={() => setTurnSpecies(item.id)}
                             style={[styles.chip, selected ? styles.chipOn : null]}
                           >
-                            <Text style={styles.chipText}>{item.label}</Text>
+                            <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{item.label}</Text>
                           </Pressable>
                         );
                       })}
@@ -780,7 +786,7 @@ export default function GameScreen() {
                             onPress={() => setClan(item)}
                             style={[styles.chip, selected ? styles.chipOn : null]}
                           >
-                            <Text style={styles.chipText}>{item}</Text>
+                            <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{item}</Text>
                           </Pressable>
                         );
                       })}
@@ -799,7 +805,7 @@ export default function GameScreen() {
                             onPress={() => setSubtype(item)}
                             style={[styles.chip, selected ? styles.chipOn : null]}
                           >
-                            <Text style={styles.chipText}>{item}</Text>
+                            <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{item}</Text>
                           </Pressable>
                         );
                       })}

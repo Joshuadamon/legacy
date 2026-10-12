@@ -10,7 +10,15 @@ import { colors, fonts, makeStyles } from "../src/theme";
 
 const useStyles = makeStyles((palette) => ({
   scroll: { flex: 1, paddingHorizontal: 24, paddingTop: 24 },
-  kicker: { color: palette.accent, fontFamily: fonts.uiMedium, letterSpacing: 1.4, fontSize: 12 },
+  kicker: {
+    color: palette.textMuted,
+    fontFamily: fonts.uiMedium,
+    letterSpacing: 1.4,
+    fontSize: 12,
+    borderTopWidth: 1,
+    borderTopColor: palette.gold,
+    paddingTop: 12,
+  },
   title: { color: palette.text, fontFamily: fonts.display, fontSize: 34, marginTop: 8, marginBottom: 12 },
   note: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 16, lineHeight: 24, marginBottom: 20 },
   sheet: { paddingHorizontal: 22, paddingBottom: 28 },
@@ -59,7 +67,7 @@ export default function SettingsScreen() {
           go to anvilandember@thelittlebrownphamily.com.
         </Text>
         <Toast message={toast} />
-        <GhostButton testID="delete-account-button" label="Delete account" onPress={openDelete} />
+        <GhostButton testID="delete-account-button" label="Delete account" tone="danger" onPress={openDelete} />
         <View style={{ height: 12 }} />
         <GhostButton testID="settings-back-button" label="Back" onPress={() => router.back()} />
       </View>
@@ -67,15 +75,15 @@ export default function SettingsScreen() {
         ref={sheet}
         snapPoints={snaps}
         onDismiss={() => setStep(1)}
-        backgroundStyle={{ backgroundColor: colors.surface }}
-        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+        backgroundStyle={{ backgroundColor: colors.surfaceRaised }}
+        handleIndicatorStyle={{ backgroundColor: colors.gold }}
       >
         <BottomSheetView style={styles.sheet} testID="delete-account-sheet">
           {step === 1 ? (
             <View testID="delete-step-one">
               <Text style={styles.sheetTitle}>Delete the account?</Text>
               <Text style={styles.note}>This is the first confirmation. The record is still here.</Text>
-              <PrimaryButton testID="continue-delete-button" label="Continue" onPress={() => setStep(2)} />
+              <PrimaryButton testID="continue-delete-button" label="Continue" tone="danger" onPress={() => setStep(2)} />
               <View style={{ height: 12 }} />
               <GhostButton testID="cancel-delete-account" label="Cancel" onPress={() => sheet.current?.dismiss()} />
             </View>
@@ -87,6 +95,7 @@ export default function SettingsScreen() {
                 testID="confirm-delete-account"
                 label={busy ? "Closing..." : "Delete account"}
                 disabled={busy}
+                tone="danger"
                 onPress={() => void removeAccount()}
               />
               <View style={{ height: 12 }} />

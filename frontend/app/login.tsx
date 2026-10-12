@@ -12,10 +12,16 @@ const useStyles = makeStyles((colors) => ({
   scroll: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 24, paddingVertical: 32 },
   mark: { width: 72, height: 72, marginBottom: 20 },
   word: {
-    color: colors.text,
+    color: colors.gold,
     fontFamily: fonts.display,
     fontSize: 42,
     letterSpacing: 6,
+  },
+  rule: {
+    width: 48,
+    height: 1,
+    backgroundColor: colors.gold,
+    marginTop: 14,
   },
   line: {
     color: colors.textMuted,
@@ -118,6 +124,7 @@ export default function LoginScreen() {
       <KeyboardAwareScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <Image source={require("../assets/icon.png")} style={styles.mark} contentFit="contain" />
         <Text style={styles.word}>LEGACY</Text>
+        <View style={styles.rule} />
         <Text style={styles.line}>One life. Then the next.</Text>
         <Toast message={toast} />
         <TextInput
@@ -151,7 +158,7 @@ export default function LoginScreen() {
           secureTextEntry
           style={styles.input}
         />
-        <PrimaryButton
+        <GhostButton
           testID="register-email-button"
           label={busy ? "Opening..." : "Register with email"}
           disabled={busy}

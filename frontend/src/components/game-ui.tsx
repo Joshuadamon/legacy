@@ -11,11 +11,26 @@ const useStyles = makeStyles((colors) => ({
     backgroundColor: colors.background,
   },
   button: {
-    backgroundColor: colors.accent,
+    backgroundColor: colors.ember,
     borderRadius: 8,
     paddingVertical: 14,
     paddingHorizontal: 16,
     alignItems: "center",
+    shadowColor: colors.ember,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  buttonPressed: {
+    backgroundColor: colors.emberDeep,
+  },
+  buttonDanger: {
+    backgroundColor: colors.danger,
+    shadowColor: colors.danger,
+  },
+  buttonDangerPressed: {
+    opacity: 0.82,
   },
   buttonText: {
     color: colors.background,
@@ -25,12 +40,19 @@ const useStyles = makeStyles((colors) => ({
     letterSpacing: 0.3,
     textAlign: "center",
   },
+  buttonTextDanger: {
+    color: colors.text,
+  },
   ghost: {
+    backgroundColor: colors.surface,
     borderColor: colors.line,
     borderWidth: 1,
     borderRadius: 8,
     paddingVertical: 14,
     paddingHorizontal: 16,
+  },
+  ghostDanger: {
+    borderColor: colors.danger,
   },
   fill: {
     flexGrow: 1,
@@ -41,6 +63,10 @@ const useStyles = makeStyles((colors) => ({
     color: colors.text,
     fontFamily: fonts.ui,
     fontSize: 16,
+    textAlign: "center",
+  },
+  ghostTextDanger: {
+    color: colors.danger,
   },
   disabled: { opacity: 0.45 },
   meterLabel: {
@@ -52,14 +78,22 @@ const useStyles = makeStyles((colors) => ({
   },
   track: {
     height: 4,
-    backgroundColor: colors.line,
+    backgroundColor: colors.surfaceRaised,
     borderRadius: 2,
     marginTop: 6,
     overflow: "hidden",
   },
   meterFill: {
     height: 4,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.ember,
+  },
+  meterBlood: {
+    height: 4,
+    backgroundColor: colors.blood,
+  },
+  meterMoon: {
+    height: 4,
+    backgroundColor: colors.moon,
   },
   statRow: {
     flexDirection: "row",
@@ -133,11 +167,13 @@ export function PrimaryButton({
   onPress,
   testID,
   disabled,
+  tone = "ember",
 }: {
   label: string;
   onPress: () => void;
   testID: string;
   disabled?: boolean;
+  tone?: "ember" | "danger";
 }) {
   const styles = useStyles();
   return (
@@ -149,9 +185,15 @@ export function PrimaryButton({
         void hapticTap();
         onPress();
       }}
-      style={[styles.button, disabled ? styles.disabled : null]}
+      style={({ pressed }) => [
+        styles.button,
+        tone === "danger" ? styles.buttonDanger : null,
+        pressed && tone === "danger" ? styles.buttonDangerPressed : null,
+        pressed && tone === "ember" ? styles.buttonPressed : null,
+        disabled ? styles.disabled : null,
+      ]}
     >
-      <Text style={styles.buttonText}>{label}</Text>
+      <Text style={[styles.buttonText, tone === "danger" ? styles.buttonTextDanger : null]}>{label}</Text>
     </Pressable>
   );
 }
@@ -162,12 +204,14 @@ export function GhostButton({
   testID,
   disabled,
   fill,
+  tone = "quiet",
 }: {
   label: string;
   onPress: () => void;
   testID: string;
   disabled?: boolean;
   fill?: boolean;
+  tone?: "quiet" | "danger";
 }) {
   const styles = useStyles();
   return (
@@ -179,23 +223,37 @@ export function GhostButton({
         void hapticTap();
         onPress();
       }}
-      style={[styles.ghost, fill ? styles.fill : null, disabled ? styles.disabled : null]}
+      style={[
+        styles.ghost,
+        fill ? styles.fill : null,
+        tone === "danger" ? styles.ghostDanger : null,
+        disabled ? styles.disabled : null,
+      ]}
     >
-      <Text style={styles.ghostText}>{label}</Text>
+      <Text style={[styles.ghostText, tone === "danger" ? styles.ghostTextDanger : null]}>{label}</Text>
     </Pressable>
   );
 }
 
-export function Meter({ label, value }: { label: string; value: number }) {
+export function Meter({
+  label,
+  value,
+  tone = "ember",
+}: {
+  label: string;
+  value: number;
+  tone?: "ember" | "blood" | "moon";
+}) {
   const styles = useStyles();
   const width = `${Math.max(0, Math.min(100, value))}%` as const;
+  const fill = tone === "blood" ? styles.meterBlood : tone === "moon" ? styles.meterMoon : styles.meterFill;
   return (
     <View>
       <Text style={styles.meterLabel}>
         {label} {Math.round(value)}
       </Text>
       <View style={styles.track}>
-        <View style={[styles.meterFill, { width }]} />
+        <View style={[fill, { width }]} />
       </View>
     </View>
   );

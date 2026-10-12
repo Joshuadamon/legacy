@@ -20,14 +20,18 @@ const CHIP_LABEL: Record<string, string> = {
 const useStyles = makeStyles((palette) => ({
   scroll: { paddingHorizontal: 24, paddingBottom: 28 },
   kicker: {
-    color: palette.accent,
+    color: palette.textMuted,
     fontFamily: fonts.uiMedium,
     letterSpacing: 1.4,
     fontSize: 12,
     marginTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: palette.gold,
+    paddingTop: 12,
   },
   balances: { flexDirection: "row", gap: 28, marginBottom: 8 },
-  balance: { color: palette.text, fontFamily: fonts.display, fontSize: 40, marginTop: 6 },
+  balanceMarks: { color: palette.bone, fontFamily: fonts.display, fontSize: 40, marginTop: 6 },
+  balanceCoins: { color: palette.gold, fontFamily: fonts.display, fontSize: 40, marginTop: 6 },
   unit: { color: palette.textMuted, fontFamily: fonts.ui, fontSize: 15, marginBottom: 14 },
   chipRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 24 },
   chip: {
@@ -38,8 +42,9 @@ const useStyles = makeStyles((palette) => ({
     paddingVertical: 8,
     backgroundColor: palette.surface,
   },
-  chipOn: { borderColor: palette.accent, backgroundColor: palette.surfaceRaised },
+  chipOn: { borderColor: palette.gold, backgroundColor: palette.surfaceRaised },
   chipText: { color: palette.text, fontFamily: fonts.uiMedium, fontSize: 14 },
+  chipTextOn: { color: palette.gold },
   card: {
     borderColor: palette.line,
     borderWidth: 1,
@@ -49,7 +54,10 @@ const useStyles = makeStyles((palette) => ({
     marginBottom: 12,
   },
   cardTitle: { color: palette.text, fontFamily: fonts.display, fontSize: 22 },
-  cost: { color: palette.accent, fontFamily: fonts.uiMedium, fontSize: 14, marginTop: 4 },
+  coinTitle: { color: palette.gold },
+  costMarks: { color: palette.bone, fontFamily: fonts.uiMedium, fontSize: 14, marginTop: 4 },
+  costCoins: { color: palette.gold, fontFamily: fonts.uiMedium, fontSize: 14, marginTop: 4 },
+  price: { color: palette.textMuted, fontFamily: fonts.uiMedium, fontSize: 14, marginTop: 4 },
   blurb: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, marginVertical: 8 },
   sheet: { paddingHorizontal: 22, paddingBottom: 28 },
   sheetTitle: { color: palette.text, fontFamily: fonts.display, fontSize: 28, marginBottom: 8 },
@@ -149,13 +157,13 @@ export default function StoreScreen() {
         <Text style={styles.kicker}>STORE</Text>
         <View style={styles.balances}>
           <View>
-            <Text testID="marks-balance" style={styles.balance}>
+            <Text testID="marks-balance" style={styles.balanceMarks}>
               {store.data?.marks ?? "—"}
             </Text>
             <Text style={styles.unit}>Legacy Marks</Text>
           </View>
           <View>
-            <Text testID="coins-balance" style={styles.balance}>
+            <Text testID="coins-balance" style={styles.balanceCoins}>
               {store.data?.coins ?? "—"}
             </Text>
             <Text style={styles.unit}>Coins</Text>
@@ -166,7 +174,7 @@ export default function StoreScreen() {
         {packs.map((pack) => (
           <View key={pack.id} testID={`pack-${pack.id}`} style={styles.card}>
             <Text style={styles.cardTitle}>{pack.name}</Text>
-            <Text style={styles.cost}>
+            <Text style={pack.currency === "coins" ? styles.costCoins : styles.costMarks}>
               {pack.cost} {pack.currency === "coins" ? "coins" : "marks"}
             </Text>
             <Text style={styles.blurb}>{pack.blurb}</Text>
@@ -183,8 +191,8 @@ export default function StoreScreen() {
         <View testID="coin-packs">
           {(store.data?.coin_packs ?? []).map((pack) => (
             <View key={pack.id} testID={`coin-pack-${pack.id}`} style={styles.card}>
-              <Text style={styles.cardTitle}>{pack.coins} Coins</Text>
-              <Text style={styles.cost}>{pack.price_label}</Text>
+              <Text style={[styles.cardTitle, styles.coinTitle]}>{pack.coins} Coins</Text>
+              <Text style={styles.price}>{pack.price_label}</Text>
               <GhostButton
                 testID={`buy-${pack.id}`}
                 label={verify.isPending ? "Checking..." : `TEST · ${pack.price_label}`}
@@ -219,8 +227,8 @@ export default function StoreScreen() {
       <BottomSheetModal
         ref={sheet}
         snapPoints={snaps}
-        backgroundStyle={{ backgroundColor: colors.surface }}
-        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+        backgroundStyle={{ backgroundColor: colors.surfaceRaised }}
+        handleIndicatorStyle={{ backgroundColor: colors.gold }}
       >
         <BottomSheetView style={styles.sheet} testID="buy-sheet">
           <Text style={styles.sheetTitle}>{pending?.name}</Text>
@@ -260,7 +268,7 @@ function GhostChip({
       onPress={onPress}
       style={[styles.chip, selected ? styles.chipOn : null]}
     >
-      <Text style={styles.chipText}>{label}</Text>
+      <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{label}</Text>
     </Pressable>
   );
 }

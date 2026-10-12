@@ -10,10 +10,16 @@ import { fonts, makeStyles } from "../src/theme";
 const useStyles = makeStyles((palette) => ({
   wrap: { flex: 1, justifyContent: "center", paddingHorizontal: 24 },
   kicker: {
-    color: palette.accent,
-    fontFamily: fonts.uiMedium,
-    letterSpacing: 1.4,
-    fontSize: 12,
+    color: palette.gold,
+    fontFamily: fonts.display,
+    letterSpacing: 4,
+    fontSize: 22,
+  },
+  rule: {
+    width: 48,
+    height: 1,
+    backgroundColor: palette.gold,
+    marginTop: 14,
   },
   title: { color: palette.text, fontFamily: fonts.display, fontSize: 34, marginTop: 8 },
   body: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 18, lineHeight: 28, marginTop: 12, marginBottom: 24 },
@@ -66,6 +72,7 @@ export default function AgeScreen() {
       <Screen testID="age-blocked-screen">
         <View style={styles.wrap}>
           <Text style={styles.kicker}>LEGACY</Text>
+          <View style={styles.rule} />
           <Text style={styles.title}>Not yet.</Text>
           <Text style={styles.body}>This life sim is 17 or older. No account and no life were opened.</Text>
         </View>
@@ -77,6 +84,7 @@ export default function AgeScreen() {
     <Screen testID="age-gate-screen">
       <View style={styles.wrap}>
         <Text style={styles.kicker}>LEGACY</Text>
+        <View style={styles.rule} />
         <Text style={styles.title}>Are you 17 or older?</Text>
         <Text style={styles.body}>LEGACY is a mature life sim, 17+. Are you 17 or older?</Text>
         <Toast message={toast} />
