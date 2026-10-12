@@ -141,8 +141,10 @@ export type Save = {
 export type Profile = {
   user_id: string;
   marks: number;
+  coins: number;
   owned_packs: string[];
   lives_lived: number;
+  immortal: boolean;
   unlocks: { careers: string[]; cosmetics: string[]; species: string[] };
 };
 
@@ -152,7 +154,43 @@ export type StorePack = {
   name: string;
   blurb: string;
   cost: number;
+  currency: "marks" | "coins";
   owned: boolean;
+};
+
+export type CoinPack = {
+  id: string;
+  product_id: string;
+  coins: number;
+  price_label: string;
+};
+
+export type ImmortalOffer = {
+  product_id: string;
+  entitlement: string;
+  price_label: string;
+  terms: string;
+  active: boolean;
+};
+
+export type StoreCatalog = {
+  marks: number;
+  coins: number;
+  lives_lived: number;
+  categories: string[];
+  packs: StorePack[];
+  coin_packs: CoinPack[];
+  subscription: ImmortalOffer;
+};
+
+export type Descendant = {
+  id: string;
+  name: string;
+  age_years: number;
+  age_months: number;
+  age_quarters: number;
+  generation_depth: number;
+  relation: string;
 };
 
 export type HeirOption = {
@@ -216,9 +254,16 @@ export function useStore() {
   const { status } = useAuth();
   return useQuery({
     queryKey: ["store"],
-    queryFn: () =>
-      api<{ marks: number; lives_lived: number; categories: string[]; packs: StorePack[] }>("/api/store"),
+    queryFn: () => api<StoreCatalog>("/api/store"),
     enabled: status === "user",
+  });
+}
+
+export function useDescendants(enabled: boolean) {
+  return useQuery({
+    queryKey: ["game", "descendants"],
+    queryFn: () => api<{ descendants: Descendant[] }>("/api/game/descendants"),
+    enabled,
   });
 }
 
@@ -335,6 +380,35 @@ export function useBuyPack() {
       api<{ profile: Profile; pack_id: string }>("/api/store/buy", {
         method: "POST",
         body: JSON.stringify({ pack_id }),
+      }),
+    onSuccess: refresh,
+  });
+}
+
+export const TEST_PURCHASE_RECEIPT = "legacy-test-receipt";
+
+export function useVerifyPurchase() {
+  const refresh = useInvalidateLife();
+  return useMutation({
+    mutationFn: (body: { product_id: string; active?: boolean }) =>
+      api<{ profile: Profile; coins_granted: number; immortal: boolean; product_id: string }>(
+        "/api/store/purchase/verify",
+        {
+          method: "POST",
+          body: JSON.stringify({ ...body, receipt: TEST_PURCHASE_RECEIPT }),
+        },
+      ),
+    onSuccess: refresh,
+  });
+}
+
+export function usePassTorch() {
+  const refresh = useInvalidateLife();
+  return useMutation({
+    mutationFn: (descendant_id: string) =>
+      api<{ save: Save }>("/api/game/pass-torch", {
+        method: "POST",
+        body: JSON.stringify({ descendant_id }),
       }),
     onSuccess: refresh,
   });

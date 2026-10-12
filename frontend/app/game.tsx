@@ -1,6 +1,6 @@
 import { BottomSheetModal, BottomSheetScrollView } from "@gorhom/bottom-sheet";
-import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 
 import { ApiError } from "../src/api";
@@ -21,6 +21,8 @@ import {
   useBackgrounds,
   useChoice,
   useGameState,
+  useDescendants,
+  usePassTorch,
   useProfile,
   useSkip,
   useSupernatural,
@@ -116,6 +118,7 @@ const useStyles = makeStyles((palette) => ({
     marginBottom: 6,
   },
   note: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, marginTop: 6 },
+  immortal: { color: palette.accent, fontFamily: fonts.uiMedium, fontSize: 14, marginTop: 8, letterSpacing: 0.4 },
 
   chips: { flexDirection: "row", gap: 8, paddingVertical: 8 },
   chip: {
@@ -233,10 +236,12 @@ export default function GameScreen() {
   const choice = useChoice();
   const skip = useSkip();
   const abandon = useAbandon();
+  const passTorch = usePassTorch();
   const turn = useTransform();
   const power = useSupernatural();
   const backgrounds = useBackgrounds();
   const lifeRef = useRef<BottomSheetModal>(null);
+  const torchRef = useRef<BottomSheetModal>(null);
   const abandonRef = useRef<BottomSheetModal>(null);
   const powersRef = useRef<BottomSheetModal>(null);
   const skipRef = useRef<BottomSheetModal>(null);
@@ -244,6 +249,9 @@ export default function GameScreen() {
   const [toast, setToast] = useState<string | null>(null);
   const [montage, setMontage] = useState<SkipResult | null>(null);
   const [partnerOpen, setPartnerOpen] = useState(false);
+  const [torchOpen, setTorchOpen] = useState(false);
+  const [torchId, setTorchId] = useState<string | null>(null);
+  const descendants = useDescendants(torchOpen);
   const [clan, setClan] = useState("");
   const [subtype, setSubtype] = useState("");
   const [turnSpecies, setTurnSpecies] = useState<"vampire" | "lycanthrope" | "witch">("vampire");
@@ -262,6 +270,15 @@ export default function GameScreen() {
     ...(holdsCraft ? [{ id: "witch" as const, label: "Witch" }] : []),
   ];
   const chosenTurn = turnOptions.some((item) => item.id === turnSpecies) ? turnSpecies : turnOptions[0]?.id;
+
+  const refetchProfile = profile.refetch;
+  const refetchState = state.refetch;
+  useFocusEffect(
+    useCallback(() => {
+      void refetchProfile();
+      void refetchState();
+    }, [refetchProfile, refetchState]),
+  );
 
   useEffect(() => {
     if (!state.isSuccess || state.isFetching) return;
@@ -325,6 +342,21 @@ export default function GameScreen() {
     } catch (error) {
       void hapticError();
       setToast(error instanceof ApiError ? error.message : "The night did not answer.");
+    }
+  }
+
+  async function confirmTorch() {
+    if (!torchId) return;
+    setToast(null);
+    try {
+      await passTorch.mutateAsync(torchId);
+      void hapticTap();
+      torchRef.current?.dismiss();
+      setTorchOpen(false);
+      setTorchId(null);
+    } catch (error) {
+      void hapticError();
+      setToast(error instanceof ApiError ? error.message : "The life stayed where it was.");
     }
   }
 
@@ -455,7 +487,14 @@ export default function GameScreen() {
           <Text style={styles.sheetTitle}>{save.character.name}</Text>
           <Text style={styles.note}>{save.character.background}</Text>
           <Text style={styles.section}>VITALS</Text>
-          <StatLine label="Age" value={formatAge(save.character.age_years, save.character.age_months)} />
+          {profile.data?.profile.immortal ? (
+            <Text testID="immortal-indicator" style={styles.immortal}>
+              Ageless. The body can still be ended.
+            </Text>
+          ) : null}
+          <View testID="life-age">
+            <StatLine label="Age" value={formatAge(save.character.age_years, save.character.age_months)} />
+          </View>
           <StatLine label="Money" value={moneyLabel(save.character.stats.money)} />
           <StatLine label="Reputation" value={save.character.stats.reputation} />
           <StatLine label="Family" value={save.character.stats.family} />
@@ -541,6 +580,21 @@ export default function GameScreen() {
               {line}
             </Text>
           ))}
+          {profile.data?.profile.immortal ? (
+            <>
+              <View style={{ height: 18 }} />
+              <GhostButton
+                testID="pass-torch-button"
+                label="Pass the torch"
+                onPress={() => {
+                  lifeRef.current?.dismiss();
+                  setTorchId(null);
+                  setTorchOpen(true);
+                  torchRef.current?.present();
+                }}
+              />
+            </>
+          ) : null}
           <View style={{ height: 18 }} />
           <GhostButton
             testID="abandon-life-button"
@@ -549,6 +603,45 @@ export default function GameScreen() {
               lifeRef.current?.dismiss();
               abandonRef.current?.present();
             }}
+          />
+        </BottomSheetScrollView>
+      </BottomSheetModal>
+      <BottomSheetModal
+        ref={torchRef}
+        snapPoints={snaps}
+        onDismiss={() => setTorchOpen(false)}
+        backgroundStyle={{ backgroundColor: colors.surface }}
+        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+      >
+        <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="torch-sheet">
+          <Text style={styles.sheetTitle}>Pass the torch</Text>
+          <Text style={styles.note}>The life continues in someone already born. This is not a death.</Text>
+          {(descendants.data?.descendants ?? []).map((person) => {
+            const selected = person.id === torchId;
+            return (
+              <Pressable
+                key={person.id}
+                testID={`torch-descendant-${person.id}`}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => setTorchId(person.id)}
+              >
+                <StatLine
+                  label={`${person.name} · ${person.relation}`}
+                  value={formatAge(person.age_years, person.age_months)}
+                />
+              </Pressable>
+            );
+          })}
+          {(descendants.data?.descendants ?? []).length === 0 ? (
+            <Text style={styles.note}>No living descendant can take it yet.</Text>
+          ) : null}
+          <View style={{ height: 16 }} />
+          <PrimaryButton
+            testID="confirm-torch-button"
+            label={passTorch.isPending ? "Passing..." : "Confirm"}
+            disabled={!torchId || passTorch.isPending}
+            onPress={() => void confirmTorch()}
           />
         </BottomSheetScrollView>
       </BottomSheetModal>

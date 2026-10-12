@@ -6,7 +6,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { ApiError } from "../src/api";
 import { GhostButton, PrimaryButton, Screen, Toast, hapticError, hapticSuccess } from "../src/components/game-ui";
 import { colors, fonts, makeStyles } from "../src/theme";
-import { useBuyPack, useStore, type StorePack } from "../src/use-game";
+import { useBuyPack, useStore, useVerifyPurchase, type StorePack } from "../src/use-game";
 
 const CHIP_LABEL: Record<string, string> = {
   all: "All",
@@ -26,6 +26,7 @@ const useStyles = makeStyles((palette) => ({
     fontSize: 12,
     marginTop: 18,
   },
+  balances: { flexDirection: "row", gap: 28, marginBottom: 8 },
   balance: { color: palette.text, fontFamily: fonts.display, fontSize: 40, marginTop: 6 },
   unit: { color: palette.textMuted, fontFamily: fonts.ui, fontSize: 15, marginBottom: 14 },
   chipRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 24 },
@@ -60,6 +61,7 @@ export default function StoreScreen() {
   const router = useRouter();
   const store = useStore();
   const buy = useBuyPack();
+  const verify = useVerifyPurchase();
   const [category, setCategory] = useState("all");
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState<StorePack | null>(null);
@@ -70,14 +72,42 @@ export default function StoreScreen() {
 
   function ask(pack: StorePack) {
     if (pack.owned) return;
-    if ((store.data?.marks ?? 0) < pack.cost) {
+    const currency = pack.currency === "coins" ? "coins" : "marks";
+    const balance = currency === "coins" ? (store.data?.coins ?? 0) : (store.data?.marks ?? 0);
+    if (balance < pack.cost) {
       void hapticError();
-      setToast("Not enough Legacy Marks.");
+      setToast(currency === "coins" ? "Not enough Coins." : "Not enough Legacy Marks.");
       return;
     }
     setPending(pack);
     setToast(null);
     sheet.current?.present();
+  }
+
+  async function buyCoins(productId: string, amount: number) {
+    setToast(null);
+    try {
+      await verify.mutateAsync({ product_id: productId });
+      void hapticSuccess();
+      setToast(`TEST purchase added ${amount} Coins.`);
+    } catch (error) {
+      void hapticError();
+      setToast(error instanceof ApiError ? error.message : "The purchase could not be verified.");
+    }
+  }
+
+  async function toggleImmortal() {
+    if (!store.data?.subscription) return;
+    setToast(null);
+    const next = !store.data.subscription.active;
+    try {
+      await verify.mutateAsync({ product_id: store.data.subscription.product_id, active: next });
+      void hapticSuccess();
+      setToast(next ? "TEST immortality is on." : "TEST immortality has lapsed.");
+    } catch (error) {
+      void hapticError();
+      setToast(error instanceof ApiError ? error.message : "The subscription could not be verified.");
+    }
   }
 
   async function confirm() {
@@ -117,15 +147,28 @@ export default function StoreScreen() {
       </ScrollView>
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.kicker}>STORE</Text>
-        <Text testID="marks-balance" style={styles.balance}>
-          {store.data?.marks ?? "—"}
-        </Text>
-        <Text style={styles.unit}>Legacy Marks · {store.data?.lives_lived ?? 0} lives lived</Text>
+        <View style={styles.balances}>
+          <View>
+            <Text testID="marks-balance" style={styles.balance}>
+              {store.data?.marks ?? "—"}
+            </Text>
+            <Text style={styles.unit}>Legacy Marks</Text>
+          </View>
+          <View>
+            <Text testID="coins-balance" style={styles.balance}>
+              {store.data?.coins ?? "—"}
+            </Text>
+            <Text style={styles.unit}>Coins</Text>
+          </View>
+        </View>
+        <Text style={styles.unit}>{store.data?.lives_lived ?? 0} lives lived</Text>
         <Toast message={toast} />
         {packs.map((pack) => (
           <View key={pack.id} testID={`pack-${pack.id}`} style={styles.card}>
             <Text style={styles.cardTitle}>{pack.name}</Text>
-            <Text style={styles.cost}>{pack.cost} marks</Text>
+            <Text style={styles.cost}>
+              {pack.cost} {pack.currency === "coins" ? "coins" : "marks"}
+            </Text>
             <Text style={styles.blurb}>{pack.blurb}</Text>
             <GhostButton
               testID={`buy-${pack.id}`}
@@ -135,6 +178,42 @@ export default function StoreScreen() {
             />
           </View>
         ))}
+        <Text style={styles.kicker}>GET COINS</Text>
+        <Text style={styles.blurb}>Bought coins. Marks stay earned. These buttons are TEST until the store is live.</Text>
+        <View testID="coin-packs">
+          {(store.data?.coin_packs ?? []).map((pack) => (
+            <View key={pack.id} testID={`coin-pack-${pack.id}`} style={styles.card}>
+              <Text style={styles.cardTitle}>{pack.coins} Coins</Text>
+              <Text style={styles.cost}>{pack.price_label}</Text>
+              <GhostButton
+                testID={`buy-${pack.id}`}
+                label={verify.isPending ? "Checking..." : `TEST · ${pack.price_label}`}
+                disabled={verify.isPending}
+                onPress={() => void buyCoins(pack.product_id, pack.coins)}
+              />
+            </View>
+          ))}
+        </View>
+        <Text style={styles.kicker}>IMMORTALITY</Text>
+        <View testID="immortal-offer" style={styles.card}>
+          <Text style={styles.cardTitle}>Ageless</Text>
+          <Text testID="immortal-terms" style={styles.blurb}>
+            {store.data?.subscription.terms ?? "$14.99/month, auto-renews until canceled."}
+          </Text>
+          <Text style={styles.note}>The body does not age. It can still be killed. Canceling lets the years resume.</Text>
+          <GhostButton
+            testID="test-immortal-toggle"
+            label={
+              verify.isPending
+                ? "Checking..."
+                : store.data?.subscription.active
+                  ? "TEST · End immortality"
+                  : "TEST · $14.99/month"
+            }
+            disabled={verify.isPending || !store.data?.subscription}
+            onPress={() => void toggleImmortal()}
+          />
+        </View>
         <GhostButton testID="store-back-button" label="Back to the year" onPress={() => router.back()} />
       </ScrollView>
       <BottomSheetModal
@@ -145,7 +224,10 @@ export default function StoreScreen() {
       >
         <BottomSheetView style={styles.sheet} testID="buy-sheet">
           <Text style={styles.sheetTitle}>{pending?.name}</Text>
-          <Text style={styles.note}>Spend {pending?.cost} Legacy Marks. This stays with you across lives.</Text>
+          <Text style={styles.note}>
+            Spend {pending?.cost} {pending?.currency === "coins" ? "Coins" : "Legacy Marks"}. This stays with you across
+            lives.
+          </Text>
           <PrimaryButton
             testID="confirm-buy-button"
             label={buy.isPending ? "Spending..." : "Confirm"}

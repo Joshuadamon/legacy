@@ -437,8 +437,34 @@ STORE_PACKS: list[dict[str, Any]] = [
     },
 ]
 
+for _pack in STORE_PACKS:
+    if _pack["category"] == "supernatural":
+        _pack["currency"] = "coins"
+        _pack["cost"] = 2500
+    else:
+        _pack["currency"] = "marks"
+
 PACKS_BY_ID = {pack["id"]: pack for pack in STORE_PACKS}
 CATEGORIES = ("career", "skills", "cosmetic", "lifestyle", "supernatural")
+
+# TODO: finalize these product IDs when the bundle ID is confirmed.
+# The listing ID this build will use is com.anvilandember.legacy.
+COIN_PACKS: list[dict[str, Any]] = [
+    {"id": "coins100", "product_id": "com.anvilandember.legacy.coins100", "coins": 100, "price_label": "$0.99"},
+    {"id": "coins250", "product_id": "com.anvilandember.legacy.coins250", "coins": 250, "price_label": "$1.99"},
+    {"id": "coins500", "product_id": "com.anvilandember.legacy.coins500", "coins": 500, "price_label": "$3.99"},
+    {"id": "coins1000", "product_id": "com.anvilandember.legacy.coins1000", "coins": 1000, "price_label": "$6.99"},
+    {"id": "coins2500", "product_id": "com.anvilandember.legacy.coins2500", "coins": 2500, "price_label": "$14.99"},
+    {"id": "coins10000", "product_id": "com.anvilandember.legacy.coins10000", "coins": 10000, "price_label": "$49.99"},
+    {"id": "coins25000", "product_id": "com.anvilandember.legacy.coins25000", "coins": 25000, "price_label": "$99.99"},
+]
+COIN_PACKS_BY_PRODUCT = {item["product_id"]: item for item in COIN_PACKS}
+# TODO: finalize when the bundle ID is confirmed (com.anvilandember.legacy).
+IMMORTAL_PRODUCT_ID = "com.anvilandember.legacy.immortal.monthly"
+IMMORTAL_ENTITLEMENT = "immortal"
+IMMORTAL_PRICE_LABEL = "$14.99/month"
+IMMORTAL_TERMS = "$14.99/month, auto-renews until canceled."
+TEST_PURCHASE_RECEIPT = "legacy-test-receipt"
 
 
 def choice(
@@ -1494,9 +1520,9 @@ def work_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def fallback_event(character: dict, history: list[dict[str, Any]], generation: int) -> dict[str, Any]:
+def fallback_event(character: dict, history: list[dict[str, Any]], generation: int, immortal: bool = False) -> dict[str, Any]:
     age = quarters_of(character)
-    if age >= CLOSING_AGE:
+    if age >= CLOSING_AGE and not immortal:
         return closing_event(character)
     due = partner_fallback(character)
     if due:
@@ -1694,7 +1720,12 @@ def fresh_character(
     return character
 
 
-def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_name: str | None) -> dict[str, Any]:
+def heir_character(
+    parent: dict[str, Any],
+    child: dict[str, Any] | None,
+    given_name: str | None,
+    handoff: str = "died",
+) -> dict[str, Any]:
     """Build the next generation from a child, or from a distant relative when child is None."""
     parent_stats = parent["stats"]
     parent_flags = parent["flags"]
@@ -1728,7 +1759,13 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
         "background_key": background_key,
         "stats": stats,
         "flags": flags,
-        "life_log": [f"Continued from {parent['name']}, who died at {age_label(quarters_of(parent))}."],
+        "life_log": [
+            (
+                f"Continued from {parent['name']}, who passed the life at {age_label(quarters_of(parent))}."
+                if handoff == "torch"
+                else f"Continued from {parent['name']}, who died at {age_label(quarters_of(parent))}."
+            )
+        ],
         "unlocked_paths": [],
         "children": [],
         "partner": None,
@@ -1912,15 +1949,21 @@ def _migrate_save(save: dict[str, Any]) -> dict[str, Any]:
 
 def _migrate_profile(profile: dict[str, Any]) -> dict[str, Any]:
     profile.setdefault("marks", STARTING_MARKS)
+    if profile.get("coins") is None:
+        profile["coins"] = 0
     profile.setdefault("owned_packs", [])
     profile.setdefault("lives_lived", 0)
+    if not isinstance(profile.get("entitlements"), list):
+        profile["entitlements"] = []
     profile.setdefault("deleted_at", None)
     profile.setdefault("created_at", now())
     profile.setdefault("updated_at", now())
     profile["marks"] = max(0, int(profile["marks"]))
+    profile["coins"] = max(0, int(profile["coins"]))
     if not isinstance(profile["owned_packs"], list):
         profile["owned_packs"] = []
     profile["lives_lived"] = max(0, int(profile["lives_lived"]))
+    profile["entitlements"] = [str(item) for item in profile["entitlements"] if isinstance(item, str)]
     return profile
 
 
@@ -2263,11 +2306,130 @@ def tick_witch(character: dict[str, Any]) -> None:
     character["life_log"].append(f"Age {age_label(age)}: The working was noticed. Someone wrote the night down.")
 
 
-def advance_quarter(character: dict[str, Any], owned_packs: list[str]) -> str | None:
-    """Age one quarter. Species meters tick, and hunter heat can close the life."""
+def relation_for(depth: int) -> str:
+    if depth == 1:
+        return "child"
+    if depth == 2:
+        return "grandchild"
+    if depth == 3:
+        return "great-grandchild"
+    return "descendant"
+
+
+def collect_descendants(character: dict[str, Any]) -> list[dict[str, Any]]:
+    """Living descendants, oldest generation first, nested through the line."""
+    found: list[dict[str, Any]] = []
+
+    def walk(nodes: Any, depth: int, parent_age: int) -> None:
+        if not isinstance(nodes, list) or depth > 12:
+            return
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            if node.get("deceased") is True or node.get("alive") is False:
+                continue
+            ident = str(node.get("id") or "")
+            name = clean_name(str(node.get("name") or ""), "")
+            if not ident or not name or name == "Unnamed":
+                continue
+            try:
+                born = int(node.get("born_parent_age") or 0)
+            except (TypeError, ValueError):
+                born = 0
+            age_q = max(0, parent_age - born)
+            found.append(
+                {
+                    "id": ident,
+                    "name": name,
+                    "age_years": age_q // QUARTERS_PER_YEAR,
+                    "age_months": (age_q % QUARTERS_PER_YEAR) * 3,
+                    "age_quarters": age_q,
+                    "generation_depth": depth,
+                    "relation": relation_for(depth),
+                }
+            )
+            walk(node.get("children") or [], depth + 1, age_q)
+
+    walk(character.get("children") or [], 1, quarters_of(character))
+    return found
+
+
+def find_descendant(character: dict[str, Any], descendant_id: str) -> dict[str, Any] | None:
+    def walk(nodes: Any) -> dict[str, Any] | None:
+        if not isinstance(nodes, list):
+            return None
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            if str(node.get("id") or "") == descendant_id:
+                return node
+            found = walk(node.get("children") or [])
+            if found:
+                return found
+        return None
+
+    return walk(character.get("children") or [])
+
+
+def _record_birth(character: dict[str, Any], bucket: list[Any], parent_age: int, relation: str) -> None:
+    name = CHILD_NAMES[len(collect_descendants(character)) % len(CHILD_NAMES)]
+    bucket.append(
+        {
+            "id": str(uuid.uuid4()),
+            "name": name,
+            "born_parent_age": int(parent_age),
+            "children": [],
+        }
+    )
+    character["life_log"].append(f"Age {age_label(quarters_of(character))}: {name}, a {relation}, enters the line.")
+    trim_log(character["life_log"])
+
+
+def tick_immortal_line(character: dict[str, Any]) -> None:
+    """An ageless life still has children. One new link per year, three generations deep."""
+    age = quarters_of(character)
+    if age % QUARTERS_PER_YEAR != 0 or age < 22 * QUARTERS_PER_YEAR:
+        return
+    children = character.get("children")
+    if not isinstance(children, list):
+        character["children"] = []
+        children = character["children"]
+    if not children:
+        _record_birth(character, children, age, "child")
+        return
+    node = children[0]
+    if not isinstance(node, dict):
+        return
+    parent_age = max(0, age - int(node.get("born_parent_age") or 0))
+    depth = 1
+    while depth < 3 and isinstance(node.get("children"), list) and node["children"]:
+        nxt = node["children"][0]
+        if not isinstance(nxt, dict):
+            break
+        parent_age = max(0, parent_age - int(nxt.get("born_parent_age") or 0))
+        node = nxt
+        depth += 1
+    if depth >= 3:
+        return
+    if parent_age < 18 * QUARTERS_PER_YEAR:
+        return
+    bucket = node.get("children")
+    if not isinstance(bucket, list):
+        node["children"] = []
+        bucket = node["children"]
+    if bucket:
+        return
+    _record_birth(character, bucket, parent_age, relation_for(depth + 1))
+
+
+def advance_quarter(character: dict[str, Any], owned_packs: list[str], immortal: bool = False) -> str | None:
+    """Age one quarter. An immortal skips elder decline and the old-age close.
+
+    Violence and hunter heat still end the life. A lapsed immortal ages on the next call.
+    """
     set_age(character, quarters_of(character) + 1)
     age = quarters_of(character)
-    if age >= ELDER_AGE:
+    if not immortal and age >= ELDER_AGE:
         yearly = 1 if age < STEEP_AGE else 3
         drop = spread(yearly, age)
         if drop:
@@ -2279,11 +2441,20 @@ def advance_quarter(character: dict[str, Any], owned_packs: list[str]) -> str | 
         tick_lycanthrope(character)
     elif species == "witch":
         tick_witch(character)
+    if immortal:
+        tick_immortal_line(character)
     tick_partner(character)
     tick_livelihood(character)
     apply_owned_grants(character, owned_packs)
     character["unlocked_paths"] = compute_paths(character, owned_packs)
-    return hunter_pressure(character)
+    pressure = hunter_pressure(character)
+    if pressure:
+        return pressure
+    if int(character["stats"]["health"]) <= 0:
+        return AGE_END_CAUSE
+    if not immortal and age >= LAST_AGE:
+        return AGE_END_CAUSE
+    return None
 
 
 def _last_power_age(raw: dict[str, Any]) -> int | None:
@@ -2361,6 +2532,28 @@ def partner_record(character: dict[str, Any]) -> dict[str, str] | None:
         return None
     status = partner.get("status") if partner.get("status") in PARTNER_STATUSES else "dating"
     return {"name": str(partner["name"]), "status": status}
+
+
+def torch_record(save: dict[str, Any], heir_id: str, heir_name: str) -> dict[str, Any]:
+    """The life was handed on. This is not a death."""
+    character = save["character"]
+    quarters = quarters_of(character)
+    species = character.get("species") or "human"
+    if species not in ("human", "vampire", "lycanthrope", "witch"):
+        species = "human"
+    return {
+        "generation": int(save["generation"]),
+        "name": character["name"],
+        "years": f"0–{age_label(quarters)}",
+        "species": species,
+        "age_at_death": None,
+        "cause_of_death": None,
+        "torch_passed": True,
+        "partner": partner_record(character),
+        "heir_id": heir_id,
+        "heir_name": heir_name,
+        "epitaph": f"{character['name']} passed the life to {heir_name} at {age_label(quarters)}. The name went on.",
+    }
 
 
 def epitaph(save: dict[str, Any], heir_id: str, heir_name: str) -> dict[str, Any]:
@@ -2610,11 +2803,17 @@ async def llm_event(character: dict[str, Any], history: list[dict[str, Any]], ow
     return _sanitize_event(parse_json_object("".join(parts)), character)
 
 
-async def generate_event(character: dict[str, Any], history: list[dict[str, Any]], owned_packs: list[str], generation: int) -> dict[str, Any]:
+async def generate_event(
+    character: dict[str, Any],
+    history: list[dict[str, Any]],
+    owned_packs: list[str],
+    generation: int,
+    immortal: bool = False,
+) -> dict[str, Any]:
     generated = await llm_event(character, history, owned_packs, generation)
     if generated:
         return generated
-    return fallback_event(character, history, generation)
+    return fallback_event(character, history, generation, immortal)
 
 
 def event_blocks_skip(event: Any) -> bool:
@@ -2642,11 +2841,11 @@ def skip_year_drift(character: dict[str, Any]) -> None:
         character["flags"][key] = clamp(int(character["flags"][key]) + delta)
 
 
-def _quiet_year_line(character: dict[str, Any], age: int, ended: str | None) -> str:
+def _quiet_year_line(character: dict[str, Any], age: int, ended: str | None, immortal: bool = False) -> str:
     label = age_label(age)
     if ended:
         return f"Age {label}. The quiet ran out. {ended}"
-    if age >= CLOSING_AGE:
+    if age >= CLOSING_AGE and not immortal:
         return f"Age {label}. The years narrowed, and the next one will not be quiet."
     name = character.get("name") or "You"
     partner = _partner_now(character)
@@ -2689,8 +2888,8 @@ def _quiet_year_line(character: dict[str, Any], age: int, ended: str | None) -> 
     return lines[slot]
 
 
-def fallback_montage(character: dict[str, Any], years: list[dict[str, Any]]) -> dict[str, Any]:
-    lines = [_quiet_year_line(character, int(year["age"]), year.get("ended")) for year in years]
+def fallback_montage(character: dict[str, Any], years: list[dict[str, Any]], immortal: bool = False) -> dict[str, Any]:
+    lines = [_quiet_year_line(character, int(year["age"]), year.get("ended"), immortal) for year in years]
     return {"text": " ".join(lines), "lines": lines}
 
 
@@ -2767,11 +2966,11 @@ async def llm_montage(character: dict[str, Any], years: list[dict[str, Any]]) ->
     return _clean_montage(parse_json_object("".join(parts)), years)
 
 
-async def compose_montage(character: dict[str, Any], years: list[dict[str, Any]]) -> dict[str, Any]:
+async def compose_montage(character: dict[str, Any], years: list[dict[str, Any]], immortal: bool = False) -> dict[str, Any]:
     generated = await llm_montage(character, years)
     if generated:
         return generated
-    return fallback_montage(character, years)
+    return fallback_montage(character, years, immortal)
 
 
 # --- storage -----------------------------------------------------------------
@@ -2921,22 +3120,43 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
     return public_doc(user) or {}
 
 
+def profile_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "user_id": profile["user_id"],
+        "marks": int(profile["marks"]),
+        "coins": int(profile["coins"]),
+        "owned_packs": list(profile.get("owned_packs") or []),
+        "lives_lived": int(profile["lives_lived"]),
+        "entitlements": list(profile.get("entitlements") or []),
+        "deleted_at": profile.get("deleted_at"),
+        "created_at": profile.get("created_at") or now(),
+        "updated_at": now(),
+    }
+
+
+async def save_profile(profile: dict[str, Any]) -> None:
+    store = require_db()
+    await store.profiles.update_one(
+        {"user_id": profile["user_id"], "deleted_at": None},
+        {"$set": profile_payload(profile)},
+    )
+
+
 async def ensure_profile(user_id: str) -> dict[str, Any]:
     store = require_db()
     found = await store.profiles.find_one({"user_id": user_id, "deleted_at": None})
     if found:
         migrated = _migrate_profile(found)
-        await store.profiles.update_one(
-            {"user_id": user_id, "deleted_at": None},
-            {"$set": {"marks": migrated["marks"], "owned_packs": migrated["owned_packs"], "lives_lived": migrated["lives_lived"], "updated_at": now()}},
-        )
+        await save_profile(migrated)
         return migrated
     created = _migrate_profile(
         {
             "user_id": user_id,
             "marks": STARTING_MARKS,
+            "coins": 0,
             "owned_packs": [],
             "lives_lived": 0,
+            "entitlements": [],
             "deleted_at": None,
             "created_at": now(),
             "updated_at": now(),
@@ -2948,13 +3168,21 @@ async def ensure_profile(user_id: str) -> dict[str, Any]:
 
 def profile_view(profile: dict[str, Any]) -> dict[str, Any]:
     owned = list(profile.get("owned_packs") or [])
+    entitlements = list(profile.get("entitlements") or [])
     return {
         "user_id": profile["user_id"],
         "marks": int(profile["marks"]),
+        "coins": int(profile["coins"]),
         "owned_packs": owned,
         "lives_lived": int(profile["lives_lived"]),
+        "immortal": IMMORTAL_ENTITLEMENT in set(entitlements),
         "unlocks": unlocks_from_packs(owned),
     }
+
+
+async def is_immortal(user_id: str) -> bool:
+    profile = await ensure_profile(user_id)
+    return IMMORTAL_ENTITLEMENT in set(profile.get("entitlements") or [])
 
 
 async def load_active_save(user_id: str) -> dict[str, Any] | None:
@@ -2999,7 +3227,8 @@ async def repair_save(save: dict[str, Any], owned_packs: list[str]) -> dict[str,
     apply_owned_grants(character, owned_packs)
     character["unlocked_paths"] = compute_paths(character, owned_packs)
     if migrated.get("alive") and not migrated.get("current_event"):
-        migrated["current_event"] = fallback_event(character, migrated["history"], migrated["generation"])
+        immortal = await is_immortal(str(migrated["user_id"]))
+        migrated["current_event"] = fallback_event(character, migrated["history"], migrated["generation"], immortal)
     await persist_save(migrated)
     return migrated
 
@@ -3116,6 +3345,16 @@ class BuyIn(BaseModel):
     pack_id: str
 
 
+class VerifyIn(BaseModel):
+    product_id: str = Field(min_length=3, max_length=160)
+    receipt: str = Field(default="", max_length=500)
+    active: bool | None = None
+
+
+class PassTorchIn(BaseModel):
+    descendant_id: str = Field(min_length=1, max_length=80)
+
+
 @api.get("/health")
 async def health() -> dict[str, str]:
     store = require_db()
@@ -3196,6 +3435,7 @@ async def game_new(body: NewGameIn, user: dict[str, Any] = Depends(current_user)
         raise HTTPException(status_code=409, detail="A record is already open. Choose an heir or abandon it.")
     profile = await ensure_profile(user["user_id"])
     owned = list(profile.get("owned_packs") or [])
+    immortal = await is_immortal(user["user_id"])
     requested = (body.species or "").strip().lower()
     birth = requested if requested in SPECIES_PACKS and SPECIES_PACKS[requested] in owned else "human"
     character = fresh_character(
@@ -3206,7 +3446,7 @@ async def game_new(body: NewGameIn, user: dict[str, Any] = Depends(current_user)
         clan=body.clan,
         subtype=body.subtype,
     )
-    opening = await generate_event(character, [], owned, 1)
+    opening = await generate_event(character, [], owned, 1, immortal)
     save = {
         "user_id": user["user_id"],
         "generation": 1,
@@ -3384,16 +3624,17 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
         await finish_death(save, cause)
         save["current_event"] = None
     else:
-        year_cause = advance_quarter(character, owned)
-        if year_cause:
+        immortal = await is_immortal(user["user_id"])
+        year_cause = advance_quarter(character, owned, immortal)
+        if year_cause == HUNTER_DEATH_CAUSE:
             save["true_death"] = True
             await finish_death(save, year_cause)
             save["current_event"] = None
-        elif int(character["stats"]["health"]) <= 0 or quarters_of(character) >= LAST_AGE:
-            await finish_death(save, "The body kept its own calendar.")
+        elif year_cause:
+            await finish_death(save, year_cause)
             save["current_event"] = None
         else:
-            save["current_event"] = await generate_event(character, save["history"], owned, int(save["generation"]))
+            save["current_event"] = await generate_event(character, save["history"], owned, int(save["generation"]), immortal)
     await persist_save(save)
     fresh_profile = await ensure_profile(user["user_id"])
     return {"save": client_save(save), "profile": profile_view(fresh_profile), "marks_earned": int(save.get("marks_earned") or 0)}
@@ -3410,7 +3651,8 @@ async def game_skip(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
     if not save or not save.get("alive"):
         raise HTTPException(status_code=409, detail="This life is already over")
     character = save["character"]
-    if quarters_of(character) >= CLOSING_AGE:
+    immortal = await is_immortal(user["user_id"])
+    if not immortal and quarters_of(character) >= CLOSING_AGE:
         raise HTTPException(status_code=409, detail="This life is already at its end.")
     if event_blocks_skip(save.get("current_event")):
         raise HTTPException(status_code=409, detail="This season cannot be skipped.")
@@ -3420,22 +3662,22 @@ async def game_skip(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
     true_death = False
     for _ in range(SKIP_YEARS):
         for _quarter in range(QUARTERS_PER_YEAR):
-            hunter_cause = advance_quarter(character, owned)
-            if hunter_cause:
-                cause = hunter_cause
+            year_cause = advance_quarter(character, owned, immortal)
+            if year_cause == HUNTER_DEATH_CAUSE:
+                cause = year_cause
                 true_death = True
                 break
-            if int(character["stats"]["health"]) <= 0 or quarters_of(character) >= LAST_AGE:
-                cause = AGE_END_CAUSE
+            if year_cause:
+                cause = year_cause
                 break
         if cause is None:
             skip_year_drift(character)
             if int(character["stats"]["health"]) <= 0:
                 cause = AGE_END_CAUSE
         years.append({"age": quarters_of(character), "ended": cause})
-        if cause or quarters_of(character) >= CLOSING_AGE:
+        if cause or (not immortal and quarters_of(character) >= CLOSING_AGE):
             break
-    montage = await compose_montage(character, years)
+    montage = await compose_montage(character, years, immortal)
     for line in montage["lines"]:
         character["life_log"].append(line)
     trim_log(character["life_log"])
@@ -3455,7 +3697,7 @@ async def game_skip(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
         await finish_death(save, cause)
         save["current_event"] = None
     else:
-        save["current_event"] = await generate_event(character, save["history"], owned, int(save["generation"]))
+        save["current_event"] = await generate_event(character, save["history"], owned, int(save["generation"]), immortal)
     await persist_save(save)
     stat_changes = {key: int(character["stats"][key]) - before[key] for key in STAT_KEYS}
     return {
@@ -3529,7 +3771,8 @@ async def game_heir(body: HeirIn, user: dict[str, Any] = Depends(current_user)) 
     save["history"] = []
     save["last_outcome"] = None
     save["marks_earned"] = 0
-    save["current_event"] = await generate_event(nxt, [], owned, int(save["generation"]))
+    immortal = await is_immortal(user["user_id"])
+    save["current_event"] = await generate_event(nxt, [], owned, int(save["generation"]), immortal)
     await persist_save(save)
     return {"save": client_save(save)}
 
@@ -3553,6 +3796,29 @@ async def get_profile(user: dict[str, Any] = Depends(current_user)) -> dict[str,
     return {"profile": profile_view(profile)}
 
 
+def verify_purchase_test_stub(product_id: str, receipt: str, active: bool | None) -> dict[str, Any]:
+    """TEST ONLY. Not RevenueCat, the App Store, or Play.
+
+    LEGACY_TEST_PURCHASES defaults to "1" for local play. Set it to "0" to refuse
+    every grant. The only accepted receipt is TEST_PURCHASE_RECEIPT. This function
+    is the only path that adds coins or the immortal entitlement.
+    """
+    if os.environ.get("LEGACY_TEST_PURCHASES", "1") != "1":
+        raise HTTPException(status_code=403, detail="Purchases cannot be verified")
+    if receipt != TEST_PURCHASE_RECEIPT:
+        raise HTTPException(status_code=400, detail="Purchase could not be verified")
+    if product_id == IMMORTAL_PRODUCT_ID:
+        return {
+            "kind": "entitlement",
+            "entitlement": IMMORTAL_ENTITLEMENT,
+            "active": True if active is None else bool(active),
+        }
+    pack = COIN_PACKS_BY_PRODUCT.get(product_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Unknown product")
+    return {"kind": "coins", "coins": int(pack["coins"]), "product_id": product_id}
+
+
 @api.get("/store")
 async def get_store(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     profile = await ensure_profile(user["user_id"])
@@ -3566,10 +3832,35 @@ async def get_store(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
                 "name": pack["name"],
                 "blurb": pack["blurb"],
                 "cost": pack["cost"],
+                "currency": pack.get("currency") or "marks",
                 "owned": pack["id"] in owned,
             }
         )
-    return {"marks": int(profile["marks"]), "lives_lived": int(profile["lives_lived"]), "categories": list(CATEGORIES), "packs": packs}
+    coin_packs = [
+        {
+            "id": item["id"],
+            "product_id": item["product_id"],
+            "coins": item["coins"],
+            "price_label": item["price_label"],
+        }
+        for item in COIN_PACKS
+    ]
+    immortal = IMMORTAL_ENTITLEMENT in set(profile.get("entitlements") or [])
+    return {
+        "marks": int(profile["marks"]),
+        "coins": int(profile["coins"]),
+        "lives_lived": int(profile["lives_lived"]),
+        "categories": list(CATEGORIES),
+        "packs": packs,
+        "coin_packs": coin_packs,
+        "subscription": {
+            "product_id": IMMORTAL_PRODUCT_ID,
+            "entitlement": IMMORTAL_ENTITLEMENT,
+            "price_label": IMMORTAL_PRICE_LABEL,
+            "terms": IMMORTAL_TERMS,
+            "active": immortal,
+        },
+    }
 
 
 @api.post("/store/buy")
@@ -3578,25 +3869,114 @@ async def store_buy(body: BuyIn, user: dict[str, Any] = Depends(current_user)) -
     if not pack:
         raise HTTPException(status_code=404, detail="Unknown pack")
     profile = await ensure_profile(user["user_id"])
-    if body.pack_id in (profile.get("owned_packs") or []):
+    owned = list(profile.get("owned_packs") or [])
+    if body.pack_id in owned:
         raise HTTPException(status_code=409, detail="You already keep this")
-    if int(profile["marks"]) < int(pack["cost"]):
-        raise HTTPException(status_code=402, detail="Not enough Legacy Marks")
-    store = require_db()
-    result = await store.profiles.update_one(
-        {"user_id": user["user_id"], "deleted_at": None, "marks": {"$gte": int(pack["cost"])}, "owned_packs": {"$ne": body.pack_id}},
-        {"$inc": {"marks": -int(pack["cost"])}, "$addToSet": {"owned_packs": body.pack_id}, "$set": {"updated_at": now()}},
-    )
-    if result.modified_count != 1:
-        raise HTTPException(status_code=409, detail="The purchase did not land")
+    currency = pack.get("currency") or "marks"
+    cost = int(pack["cost"])
+    if currency == "coins":
+        if int(profile["coins"]) < cost:
+            raise HTTPException(status_code=402, detail="Not enough Coins")
+        profile["coins"] = int(profile["coins"]) - cost
+    else:
+        if int(profile["marks"]) < cost:
+            raise HTTPException(status_code=402, detail="Not enough Legacy Marks")
+        profile["marks"] = int(profile["marks"]) - cost
+    owned.append(body.pack_id)
+    profile["owned_packs"] = owned
+    await save_profile(profile)
     updated = await ensure_profile(user["user_id"])
     save = await load_active_save(user["user_id"])
     if save and save.get("alive") and isinstance(save.get("character"), dict):
-        owned = list(updated.get("owned_packs") or [])
-        repaired = await repair_save(save, owned)
+        repaired = await repair_save(save, list(updated.get("owned_packs") or []))
         if repaired:
             await persist_save(repaired)
     return {"profile": profile_view(updated), "pack_id": body.pack_id}
+
+
+@api.post("/store/purchase/verify")
+async def purchase_verify(body: VerifyIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    granted = verify_purchase_test_stub(body.product_id, body.receipt, body.active)
+    profile = await ensure_profile(user["user_id"])
+    coins_granted = 0
+    if granted["kind"] == "coins":
+        coins_granted = int(granted["coins"])
+        profile["coins"] = int(profile["coins"]) + coins_granted
+    elif granted["kind"] == "entitlement":
+        held = set(profile.get("entitlements") or [])
+        if granted["active"]:
+            held.add(str(granted["entitlement"]))
+        else:
+            held.discard(str(granted["entitlement"]))
+        profile["entitlements"] = sorted(held)
+    else:
+        raise HTTPException(status_code=400, detail="Purchase could not be verified")
+    await save_profile(profile)
+    updated = await ensure_profile(user["user_id"])
+    return {
+        "profile": profile_view(updated),
+        "coins_granted": coins_granted,
+        "immortal": IMMORTAL_ENTITLEMENT in set(updated.get("entitlements") or []),
+        "product_id": body.product_id,
+    }
+
+
+@api.get("/game/descendants")
+async def game_descendants(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    profile = await ensure_profile(user["user_id"])
+    save = await load_active_save(user["user_id"])
+    if not save:
+        raise HTTPException(status_code=404, detail="No life is open")
+    save = await repair_save(save, list(profile.get("owned_packs") or []))
+    if not save or not save.get("alive"):
+        raise HTTPException(status_code=409, detail="This life is already over")
+    return {"descendants": collect_descendants(save["character"])}
+
+
+@api.post("/game/pass-torch")
+async def game_pass_torch(body: PassTorchIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if not await is_immortal(user["user_id"]):
+        raise HTTPException(status_code=403, detail="Only an immortal can pass the torch.")
+    profile = await ensure_profile(user["user_id"])
+    owned = list(profile.get("owned_packs") or [])
+    save = await load_active_save(user["user_id"])
+    if not save:
+        raise HTTPException(status_code=404, detail="No life is open")
+    save = await repair_save(save, owned)
+    if not save or not save.get("alive"):
+        raise HTTPException(status_code=409, detail="This life is already over")
+    parent = save["character"]
+    living = collect_descendants(parent)
+    if not living:
+        raise HTTPException(status_code=409, detail="There is no living descendant to receive the life.")
+    chosen = next((item for item in living if item["id"] == body.descendant_id), None)
+    if not chosen:
+        raise HTTPException(status_code=404, detail="That descendant is not in the line.")
+    node = find_descendant(parent, chosen["id"])
+    child = {
+        "id": chosen["id"],
+        "name": chosen["name"],
+        "born_parent_age": quarters_of(parent) - int(chosen["age_quarters"]),
+    }
+    nxt = heir_character(parent, child, None, "torch")
+    if node and isinstance(node.get("children"), list):
+        nxt["children"] = copy.deepcopy(node["children"])
+    apply_owned_grants(nxt, owned)
+    nxt["unlocked_paths"] = compute_paths(nxt, owned)
+    heir_name = nxt["name"]
+    save["lineage"].append(torch_record(save, chosen["id"], heir_name))
+    trim_log(save["lineage"], 40)
+    save["generation"] = int(save["generation"]) + 1
+    save["alive"] = True
+    save["cause_of_death"] = None
+    save["true_death"] = False
+    save["character"] = nxt
+    save["history"] = []
+    save["last_outcome"] = None
+    save["marks_earned"] = 0
+    save["current_event"] = await generate_event(nxt, [], owned, int(save["generation"]), True)
+    await persist_save(save)
+    return {"save": client_save(save)}
 
 
 app.include_router(api)

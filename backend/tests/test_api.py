@@ -210,6 +210,13 @@ async def test_store_buy_grants_and_rejects_duplicates(client):
     ids = {pack["id"] for pack in catalog.json()["packs"]}
     assert "supernatural-vampire" in ids
     assert catalog.json()["marks"] == 250
+    assert catalog.json()["coins"] == 0
+    vampire = next(pack for pack in catalog.json()["packs"] if pack["id"] == "supernatural-vampire")
+    assert vampire["currency"] == "coins"
+    assert vampire["cost"] == 2500
+    coat_pack = next(pack for pack in catalog.json()["packs"] if pack["id"] == "cosmetic-coat")
+    assert coat_pack["currency"] == "marks"
+    assert coat_pack["cost"] == 50
     coat = await client.post("/api/store/buy", headers=headers, json={"pack_id": "cosmetic-coat"})
     assert coat.status_code == 200, coat.text
     assert coat.json()["profile"]["marks"] == 200
@@ -223,6 +230,10 @@ async def test_store_buy_grants_and_rejects_duplicates(client):
     assert duplicate.status_code == 409
     thirsty = await client.post("/api/store/buy", headers=headers, json={"pack_id": "supernatural-vampire"})
     assert thirsty.status_code == 402
+    assert thirsty.json()["detail"] == "Not enough Coins"
+    after = await client.get("/api/profile", headers=headers)
+    assert after.json()["profile"]["marks"] == 100
+    assert after.json()["profile"]["coins"] == 0
     missing = await client.post("/api/store/buy", headers=headers, json={"pack_id": "not-real"})
     assert missing.status_code == 404
 
