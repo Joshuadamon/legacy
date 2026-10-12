@@ -11,8 +11,8 @@ const SPECIES_LABELS: Record<string, string> = {
   witch: "Witch",
 };
 
-function speciesLabel(species: string | undefined): string | null {
-  if (!species || species === "human") return null;
+function speciesLabel(species: string | undefined): string {
+  if (!species || species === "human") return "Human";
   return SPECIES_LABELS[species] ?? species;
 }
 
@@ -38,7 +38,8 @@ const useStyles = makeStyles((palette) => ({
     fontSize: 13,
     marginTop: 18,
   },
-  title: { color: palette.text, fontFamily: fonts.display, fontSize: 34, marginTop: 6, marginBottom: 16 },
+  title: { color: palette.text, fontFamily: fonts.display, fontSize: 34, marginTop: 6, marginBottom: 8 },
+  order: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, marginBottom: 16 },
   empty: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 16, lineHeight: 22, marginBottom: 12 },
   node: {
     borderColor: palette.line,
@@ -74,20 +75,17 @@ const useStyles = makeStyles((palette) => ({
 
 function AncestorNode({ entry }: { entry: LineageEntry }) {
   const styles = useStyles();
-  const species = speciesLabel(entry.species);
   const cause = entry.cause_of_death?.trim() || "The record does not say.";
   return (
     <View style={styles.node} testID={`ancestor-${entry.generation}`}>
       <Text style={styles.gen}>GENERATION {entry.generation}</Text>
       <Text style={styles.name}>{entry.name}</Text>
+      <Text style={styles.line} testID={`ancestor-species-${entry.generation}`}>
+        {speciesLabel(entry.species)}
+      </Text>
       <Text style={styles.line} testID={`ancestor-lifespan-${entry.generation}`}>
         {lifespanText(entry)}
       </Text>
-      {species ? (
-        <Text style={styles.line} testID={`ancestor-species-${entry.generation}`}>
-          {species}
-        </Text>
-      ) : null}
       <Text style={styles.muted} testID={`ancestor-cause-${entry.generation}`}>
         Died: {cause}
       </Text>
@@ -114,20 +112,17 @@ function Connector({ generation, heir }: { generation: number; heir: string }) {
 
 function LivingNode({ character }: { character: Character }) {
   const styles = useStyles();
-  const species = speciesLabel(character.species);
   const children = character.children.map((child) => child.name).filter(Boolean);
   return (
     <View style={[styles.node, styles.livingNode]} testID="living-card">
       <Text style={styles.gen}>LIVING</Text>
       <Text style={styles.name}>{character.name}</Text>
+      <Text style={styles.line} testID="living-species">
+        {speciesLabel(character.species)}
+      </Text>
       <Text style={styles.line} testID="living-age">
         Age {formatAge(character.age_years, character.age_months)}
       </Text>
-      {species ? (
-        <Text style={styles.line} testID="living-species">
-          {species}
-        </Text>
-      ) : null}
       <Text style={styles.line} testID="living-partner">
         Partner: {character.partner ? partnerText(character.partner) : "No partner"}
       </Text>
@@ -150,6 +145,7 @@ export default function LineageScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <Text style={styles.kicker}>FAMILY</Text>
         <Text style={styles.title}>The line</Text>
+        <Text style={styles.order}>Oldest at the top. The living life at the bottom.</Text>
         {line.length === 0 ? <Text style={styles.empty}>You are the first of the line.</Text> : null}
         {line.map((entry) => (
           <View key={`${entry.generation}-${entry.name}`}>
