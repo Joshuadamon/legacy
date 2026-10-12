@@ -6,6 +6,7 @@ export type User = {
   user_id: string;
   name: string;
   email?: string;
+  age_confirmed?: boolean;
 };
 
 type AuthValue = {
@@ -13,6 +14,7 @@ type AuthValue = {
   user: User | null;
   signIn: (name: string) => Promise<void>;
   signOut: () => Promise<void>;
+  confirmAge: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthValue | null>(null);
@@ -62,9 +64,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn: async (name: string) => {
         const result = await api<{ session_token: string; user: User }>("/api/auth/session", {
           method: "POST",
-          body: JSON.stringify({ session_id: randomId(), name }),
+          body: JSON.stringify({ session_id: randomId(), name, age_confirmed: true }),
         });
         await setToken(result.session_token);
+        setUser(result.user);
+        setStatus("user");
+      },
+      confirmAge: async () => {
+        const result = await api<{ user: User }>("/api/account/age", {
+          method: "POST",
+          body: JSON.stringify({ confirmed: true }),
+        });
         setUser(result.user);
         setStatus("user");
       },

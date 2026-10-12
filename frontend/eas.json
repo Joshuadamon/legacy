@@ -1,0 +1,19 @@
+{
+  "_todo": "Production reads EXPO_PUBLIC_BACKEND_URL from EAS build secrets. TODO: set that secret to the Railway host. Do not commit the host or any key here.",
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "environment": "production"
+    }
+  }
+}

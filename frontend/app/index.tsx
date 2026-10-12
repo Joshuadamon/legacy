@@ -3,10 +3,12 @@ import { ActivityIndicator, Text, View } from "react-native";
 
 import { GhostButton, Screen } from "../src/components/game-ui";
 import { colors, fonts } from "../src/theme";
+import { useAuth } from "../src/auth-context";
 import { useGameState } from "../src/use-game";
 
 export default function Index() {
   const state = useGameState();
+  const { user } = useAuth();
 
   if (state.isLoading) {
     return (
@@ -31,6 +33,7 @@ export default function Index() {
     );
   }
 
+  if (!state.data?.save && !user?.age_confirmed) return <Redirect href="/age" />;
   if (!state.data?.save) return <Redirect href="/create" />;
   if (!state.data.save.alive) return <Redirect href="/heir" />;
   return <Redirect href="/game" />;

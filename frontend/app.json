@@ -10,9 +10,11 @@
     "backgroundColor": "#0E0E10",
     "plugins": ["expo-router", "expo-font", "expo-secure-store"],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anvilandember.legacy"
     },
     "android": {
+      "package": "com.anvilandember.legacy",
       "adaptiveIcon": {
         "backgroundColor": "#0E0E10",
         "foregroundImage": "./assets/android-icon-foreground.png",

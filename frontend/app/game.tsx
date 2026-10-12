@@ -597,6 +597,15 @@ export default function GameScreen() {
           ) : null}
           <View style={{ height: 18 }} />
           <GhostButton
+            testID="open-settings-button"
+            label="Settings"
+            onPress={() => {
+              lifeRef.current?.dismiss();
+              router.push("/settings");
+            }}
+          />
+          <View style={{ height: 12 }} />
+          <GhostButton
             testID="abandon-life-button"
             label="Abandon this life"
             onPress={() => {

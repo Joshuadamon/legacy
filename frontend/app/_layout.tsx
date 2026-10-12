@@ -22,16 +22,18 @@ const queryClient = new QueryClient({
 });
 
 function Gate() {
-  const { status } = useAuth();
+  const { status, user } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
     if (status === "loading") return;
     const onLogin = segments[0] === "login";
-    if (status === "null" && !onLogin) router.replace("/login");
-    if (status === "user" && onLogin) router.replace("/");
-  }, [status, segments, router]);
+    const onAge = segments[0] === "age";
+    if (status === "null" && !onLogin && !onAge) router.replace("/age");
+    if (status === "user" && onLogin) router.replace(user?.age_confirmed ? "/" : "/age");
+    if (status === "user" && onAge && user?.age_confirmed) router.replace("/");
+  }, [status, segments, router, user?.age_confirmed]);
 
   if (status === "loading") {
     return (

@@ -3036,6 +3036,20 @@ class MemoryCollection:
             return _Result(matched_count=1, modified_count=1 if changed else 0)
         return _Result()
 
+    async def update_many(self, filt: dict[str, Any], update: dict[str, Any]) -> _Result:
+        matched = 0
+        modified = 0
+        for doc in self.docs:
+            if not _match(doc, filt):
+                continue
+            matched += 1
+            before = copy.deepcopy(doc)
+            for key, value in (update.get("$set") or {}).items():
+                doc[key] = copy.deepcopy(value)
+            if doc != before:
+                modified += 1
+        return _Result(matched_count=matched, modified_count=modified)
+
     async def delete_many(self, filt: dict[str, Any]) -> _Result:
         before = len(self.docs)
         self.docs = [doc for doc in self.docs if not _match(doc, filt)]
@@ -3117,7 +3131,10 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
     user = await store.users.find_one({"user_id": session["user_id"], "deleted_at": None})
     if not user:
         raise HTTPException(status_code=401, detail="Unknown user")
-    return public_doc(user) or {}
+    view = public_doc(user) or {}
+    if view.get("age_confirmed") is None:
+        view["age_confirmed"] = False
+    return view
 
 
 def profile_payload(profile: dict[str, Any]) -> dict[str, Any]:
@@ -3242,6 +3259,11 @@ def client_save(save: dict[str, Any]) -> dict[str, Any]:
 class SessionIn(BaseModel):
     session_id: str = Field(min_length=8, max_length=200)
     name: str = Field(default="Player", max_length=40)
+    age_confirmed: bool = True
+
+
+class AgeIn(BaseModel):
+    confirmed: bool
 
 
 class NewGameIn(BaseModel):
@@ -3371,6 +3393,7 @@ async def auth_session(body: SessionIn) -> dict[str, Any]:
         "user_id": str(uuid.uuid4()),
         "name": clean_name(body.name, "Player"),
         "email": "",
+        "age_confirmed": bool(body.age_confirmed),
         "deleted_at": None,
         "created_at": now(),
     }
@@ -3407,6 +3430,39 @@ async def auth_logout(authorization: str | None = Header(default=None), user: di
     return {"ok": True}
 
 
+@api.post("/auth/age")
+async def auth_age(body: AgeIn) -> dict[str, bool]:
+    """Under 17 never creates a user, profile, or save. Confirming age requires a session."""
+    if not body.confirmed:
+        raise HTTPException(status_code=403, detail="LEGACY is 17+. Nothing was created.")
+    raise HTTPException(status_code=401, detail="Sign in before confirming your age.")
+
+
+@api.post("/account/age")
+async def account_age(body: AgeIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if not body.confirmed:
+        raise HTTPException(status_code=403, detail="LEGACY is 17+. No life was created.")
+    store = require_db()
+    await store.users.update_one(
+        {"user_id": user["user_id"], "deleted_at": None},
+        {"$set": {"age_confirmed": True}},
+    )
+    user["age_confirmed"] = True
+    return {"user": user}
+
+
+@api.post("/account/delete")
+async def account_delete(user: dict[str, Any] = Depends(current_user)) -> dict[str, bool]:
+    store = require_db()
+    stamp = now()
+    marked = {"deleted_at": stamp}
+    await store.users.update_one({"user_id": user["user_id"], "deleted_at": None}, {"$set": marked})
+    await store.sessions.update_many({"user_id": user["user_id"], "deleted_at": None}, {"$set": marked})
+    await store.profiles.update_many({"user_id": user["user_id"], "deleted_at": None}, {"$set": marked})
+    await store.saves.update_many({"user_id": user["user_id"], "deleted_at": None}, {"$set": marked})
+    return {"ok": True}
+
+
 @api.get("/game/backgrounds")
 async def game_backgrounds() -> dict[str, Any]:
     items = [
@@ -3428,6 +3484,8 @@ async def game_state(user: dict[str, Any] = Depends(current_user)) -> dict[str, 
 
 @api.post("/game/new")
 async def game_new(body: NewGameIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if not user.get("age_confirmed"):
+        raise HTTPException(status_code=403, detail="Confirm you are 17 or older before a life begins.")
     if body.background_key not in BACKGROUNDS:
         raise HTTPException(status_code=400, detail="Unknown background")
     existing = await load_active_save(user["user_id"])

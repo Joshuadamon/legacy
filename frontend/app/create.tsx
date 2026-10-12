@@ -1,9 +1,10 @@
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 
 import { ApiError } from "../src/api";
+import { useAuth } from "../src/auth-context";
 import { PrimaryButton, Screen, Toast } from "../src/components/game-ui";
 import { colors, fonts, makeStyles } from "../src/theme";
 import { useBackgrounds, useNewGame, useProfile } from "../src/use-game";
@@ -69,6 +70,7 @@ const useStyles = makeStyles((palette) => ({
 export default function CreateScreen() {
   const styles = useStyles();
   const router = useRouter();
+  const { user } = useAuth();
   const backgrounds = useBackgrounds();
   const profile = useProfile();
   const create = useNewGame();
@@ -113,6 +115,8 @@ export default function CreateScreen() {
       setToast(error instanceof ApiError ? error.message : "The birth did not take.");
     }
   }
+
+  if (!user?.age_confirmed) return <Redirect href="/age" />;
 
   return (
     <Screen testID="create-screen">
