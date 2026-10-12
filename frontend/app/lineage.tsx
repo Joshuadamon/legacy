@@ -3,7 +3,7 @@ import { ScrollView, Text, View } from "react-native";
 
 import { GhostButton, Screen } from "../src/components/game-ui";
 import { fonts, makeStyles } from "../src/theme";
-import { useGameState, type Character, type LineageEntry } from "../src/use-game";
+import { formatAge, useGameState, type Character, type LineageEntry } from "../src/use-game";
 
 const SPECIES_LABELS: Record<string, string> = {
   vampire: "Vampire",
@@ -121,7 +121,7 @@ function LivingNode({ character }: { character: Character }) {
       <Text style={styles.gen}>LIVING</Text>
       <Text style={styles.name}>{character.name}</Text>
       <Text style={styles.line} testID="living-age">
-        Age {character.age_years}
+        Age {formatAge(character.age_years, character.age_months)}
       </Text>
       {species ? (
         <Text style={styles.line} testID="living-species">

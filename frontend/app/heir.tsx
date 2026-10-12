@@ -6,7 +6,7 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { ApiError } from "../src/api";
 import { GhostButton, PrimaryButton, Screen, Toast } from "../src/components/game-ui";
 import { colors, fonts, makeStyles } from "../src/theme";
-import { useContinueHeir, useGameState, useHeirs } from "../src/use-game";
+import { formatAge, useContinueHeir, useGameState, useHeirs } from "../src/use-game";
 
 const useStyles = makeStyles((palette) => ({
   scroll: { paddingHorizontal: 24, paddingBottom: 36 },
@@ -75,7 +75,7 @@ export default function HeirScreen() {
             <View key={heir.id} style={styles.gap}>
               <GhostButton
                 testID={`continue-${heir.id}`}
-                label={`Continue as ${heir.name}, ${heir.age_now}`}
+                label={`Continue as ${heir.name}, ${formatAge(heir.age_now, heir.age_months ?? 0)}`}
                 disabled={continueHeir.isPending}
                 onPress={() => void choose(heir.id)}
               />
