@@ -1,6 +1,6 @@
 # LEGACY
 
-An 18+ text-first life simulator. One life runs from birth to death, a year at a time. On death you continue as a child, or as a distant relative. Legacy Marks are a soft currency that persists across lives.
+An 18+ text-first life simulator. One life runs from birth to death. A turn is three months, and four turns make a year. On death you continue as a child, or as a distant relative. Legacy Marks are a soft currency that persists across lives.
 
 This repo is the local version of that game: FastAPI and MongoDB (or an in-memory stand-in) on the API, Expo on the phone.
 
@@ -24,7 +24,7 @@ npx expo start --web --port 3000
 
 Sign-in is a name plus a one-time session on this server. It keeps the `/api/auth/session`, `/api/auth/me`, and Bearer-token contract so a Google login can replace the name field later without changing the app.
 
-Years are written from a fixed deck unless `ANTHROPIC_API_KEY` is set. The model name is `ANTHROPIC_MODEL` (default `claude-sonnet-5`). If the model call fails, the deck is used and the year still resolves.
+Seasons are written from a fixed deck unless `ANTHROPIC_API_KEY` is set. The model name is `ANTHROPIC_MODEL` (default `claude-sonnet-5`). If the model call fails, the deck is used and the season still resolves.
 
 ## Tests
 
