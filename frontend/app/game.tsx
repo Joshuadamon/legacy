@@ -25,6 +25,9 @@ import {
   useSkip,
   useSupernatural,
   useTransform,
+  formatAge,
+  formatQuarters,
+  powerSpentThisYear,
   type Circle,
   type Flags,
   type LycanData,
@@ -78,6 +81,13 @@ const useStyles = makeStyles((palette) => ({
   title: { color: palette.text, fontFamily: fonts.display, fontSize: 26, marginBottom: 8 },
   narrative: { color: palette.text, fontFamily: fonts.body, fontSize: 17, lineHeight: 26, marginBottom: 18 },
   choices: { gap: 10 },
+  season: {
+    color: palette.textMuted,
+    fontFamily: fonts.uiMedium,
+    fontSize: 13,
+    letterSpacing: 1.1,
+    marginBottom: 8,
+  },
   bar: {
     flexDirection: "row",
     alignItems: "stretch",
@@ -286,7 +296,7 @@ export default function GameScreen() {
       if (!result.save.alive) router.replace("/heir");
     } catch (error) {
       void hapticError();
-      setToast(error instanceof ApiError ? error.message : "The year did not resolve.");
+      setToast(error instanceof ApiError ? error.message : "The season did not resolve.");
     }
   }
 
@@ -343,7 +353,7 @@ export default function GameScreen() {
   const lycan = asLycan(save);
   const witch = asWitch(save);
   const walking = vampire ?? lycan ?? witch;
-  const powerSpent = walking?.last_power_age === save.character.age_years;
+  const powerSpent = powerSpentThisYear(walking?.last_power_age, save.character.age_quarters);
   const yearly = YEARLY[save.character.species] ?? [];
   const showPowers = Boolean(walking) || holdsThirst || holdsMoon || holdsCraft;
   const turnCopy = chosenTurn ? TURN_COPY[chosenTurn] : null;
@@ -359,9 +369,12 @@ export default function GameScreen() {
           <Meter label="Smarts" value={save.character.stats.smarts} />
           <Meter label="Looks" value={save.character.stats.looks} />
         </View>
-        {save.last_outcome ? <Text style={styles.outcome}>Last year. {save.last_outcome}</Text> : null}
+        {save.last_outcome ? <Text style={styles.outcome}>Last season. {save.last_outcome}</Text> : null}
         <Text style={styles.title}>{save.current_event?.title}</Text>
         <Text style={styles.narrative}>{save.current_event?.narrative}</Text>
+        <Text style={styles.season} testID="live-three-months">
+          Live 3 months
+        </Text>
         <View style={styles.choices}>
           {(save.current_event?.choices ?? []).map((item, index) => (
             <GhostButton
@@ -377,7 +390,7 @@ export default function GameScreen() {
       <View style={styles.skipRow}>
         <GhostButton
           testID="skip-years-button"
-          label={skip.isPending ? "Years passing..." : "Skip a few years"}
+          label={skip.isPending ? "Years passing..." : "Skip about 3 years"}
           disabled={skip.isPending || choice.isPending}
           onPress={() => void skipYears()}
         />
@@ -393,13 +406,13 @@ export default function GameScreen() {
       {choice.isPending ? (
         <View testID="year-passing" style={styles.passing}>
           <ActivityIndicator color={colors.accent} />
-          <Text style={styles.passingText}>A year passes...</Text>
+          <Text style={styles.passingText}>Three months pass...</Text>
         </View>
       ) : null}
       {skip.isPending ? (
         <View testID="years-passing" style={styles.passing}>
           <ActivityIndicator color={colors.accent} />
-          <Text style={styles.passingText}>A few years pass...</Text>
+          <Text style={styles.passingText}>About three years pass...</Text>
         </View>
       ) : null}
       <BottomSheetModal
@@ -409,7 +422,7 @@ export default function GameScreen() {
         handleIndicatorStyle={{ backgroundColor: colors.accent }}
       >
         <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="skip-montage">
-          <Text style={styles.sheetTitle}>A few years</Text>
+          <Text style={styles.sheetTitle}>About three years</Text>
           {(montage?.montage.lines?.length ? montage.montage.lines : montage?.montage.text ? [montage.montage.text] : []).map(
             (line, index) => (
               <Text key={`${index}-${line}`} style={styles.montageLine}>
@@ -442,6 +455,7 @@ export default function GameScreen() {
           <Text style={styles.sheetTitle}>{save.character.name}</Text>
           <Text style={styles.note}>{save.character.background}</Text>
           <Text style={styles.section}>VITALS</Text>
+          <StatLine label="Age" value={formatAge(save.character.age_years, save.character.age_months)} />
           <StatLine label="Money" value={moneyLabel(save.character.stats.money)} />
           <StatLine label="Reputation" value={save.character.stats.reputation} />
           <StatLine label="Family" value={save.character.stats.family} />
@@ -506,8 +520,8 @@ export default function GameScreen() {
               label={child.name}
               value={
                 child.other_parent
-                  ? `born at ${child.born_parent_age}, with ${child.other_parent}`
-                  : `born at ${child.born_parent_age}`
+                  ? `born at ${formatQuarters(child.born_parent_age)}, with ${child.other_parent}`
+                  : `born at ${formatQuarters(child.born_parent_age)}`
               }
             />
           ))}
@@ -616,9 +630,9 @@ export default function GameScreen() {
           ) : (
             <>
               <Text style={styles.note}>
-                {save.character.age_years >= 13 && turnCopy ? turnCopy.ask : "The change waits until thirteen."}
+                {save.character.age_quarters >= 52 && turnCopy ? turnCopy.ask : "The change waits until thirteen."}
               </Text>
-              {save.character.age_years >= 13 && turnCopy ? (
+              {save.character.age_quarters >= 52 && turnCopy ? (
                 <>
                   {turnOptions.length > 1 ? (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
@@ -703,7 +717,7 @@ function Header({ save }: { save: Save }) {
         <Text style={styles.money}>{moneyLabel(save.character.stats.money)}</Text>
       </View>
       <Text style={styles.meta}>
-        Age {save.character.age_years} · {stage} · Generation {save.generation}
+        Age {formatAge(save.character.age_years, save.character.age_months)} · {stage} · Generation {save.generation}
         {asVampire(save) ? ` · ${asVampire(save)?.clan}` : ""}
         {asLycan(save) ? ` · ${asLycan(save)?.subtype}` : ""}
         {asWitch(save) ? " · the Craft" : ""}

@@ -42,6 +42,7 @@ From `frontend`, `npm run lint` is `tsc --noEmit`.
 - Owned skill packs change the living character once per life. Career packs open fields in the year prompt. The Thirst, the Moon, and the Craft are playable: a birth, or a turn after thirteen. Hunger, a full moon with low control, and flashy magic can draw hunters
 - A partner can be met, kept, married, or lost. The person at your side is the other parent, and their name and status stay on the death record
 - A job can be taken, climbed, and lost. A shop can be opened, and the heir keeps it
+- The family is a tree. Each generation keeps its partner, its death, and the heir who continued the line
 
 The family line is a tree, oldest at the top and the living life at the bottom.
 

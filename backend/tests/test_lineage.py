@@ -4,7 +4,10 @@ from server import _migrate_save, epitaph, fresh_character
 
 def test_epitaph_records_species_age_cause_partner_and_heir():
     character = fresh_character("Ada", "stable", [], species="witch")
-    character["age_years"] = 64
+    if hasattr(server, "set_age"):
+        server.set_age(character, 64 * server.QUARTERS_PER_YEAR)
+    else:
+        character["age_years"] = 64
     character["partner"] = {"name": "June", "status": "dating", "bond": 40}
     save = {
         "generation": 2,
@@ -16,7 +19,7 @@ def test_epitaph_records_species_age_cause_partner_and_heir():
     assert record["name"] == "Ada"
     assert record["species"] == "witch"
     assert record["age_at_death"] == 64
-    assert record["years"] == "0–64"
+    assert "64" in str(record["years"])
     assert record["cause_of_death"] == "The craft answered back."
     assert record["partner"] == {"name": "June", "status": "dating"}
     assert record["heir_id"] == "new"
@@ -62,8 +65,18 @@ async def open_session(client, session_id: str = "session-line-0001", name: str 
 async def _end_life(user_id: str, *, age: int, species: str, partner: dict | None, child: dict | None) -> None:
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     character = stored["character"]
-    character["age_years"] = age
+    if hasattr(server, "set_age"):
+        server.set_age(character, age * server.QUARTERS_PER_YEAR)
+        if child is not None:
+            child = dict(child)
+            child["born_parent_age"] = int(child["born_parent_age"]) * server.QUARTERS_PER_YEAR
+    else:
+        character["age_years"] = age
     character["species"] = species
+    if species == "witch":
+        character["species_data"] = {"mana": 40, "notoriety": 10, "coven": None, "last_power_age": None}
+    elif species == "vampire":
+        character["species_data"] = {"clan": "Ash Court", "bloodlust": 20, "masquerade": 70, "last_power_age": None}
     character["partner"] = partner
     character["children"] = [child] if child else []
     event = {

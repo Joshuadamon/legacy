@@ -37,24 +37,37 @@ MOON_PHASES = (20, 35, 50, 65, 80, 100, 70, 40)
 MOON_SHIFT_AT = 80
 CONTROL_SHIFT_AT = 40
 NOTORIETY_HEAT_AT = 60
+NOTORIETY_HEAT_YEARLY = 8
 BLOODLUST_YEARLY = 12
 MANA_YEARLY = 12
+SHIFT_HEALTH = 12
+SHIFT_HAPPINESS = 8
+SHIFT_REPUTATION = 10
+SHIFT_HEAT = 16
+SHIFT_CONTROL = 6
 HUNTER_DEATH_AT = 100
 HUNTER_DEATH_CAUSE = "Hunters closed the account. The body was found in the open."
 SKIP_YEARS = 3
 CLOSING_TITLES = frozenset({"The last account", "One more season"})
 AGE_END_CAUSE = "The body kept its own calendar."
-PARTNER_MIN_AGE = 16
+QUARTERS_PER_YEAR = 4
+PARTNER_MIN_AGE = 16 * QUARTERS_PER_YEAR
+CAREER_MIN_AGE = 18 * QUARTERS_PER_YEAR
+TRANSFORM_MIN_AGE = 13 * QUARTERS_PER_YEAR
+CHILD_MIN_AGE = 16 * QUARTERS_PER_YEAR
+FATAL_MIN_AGE = 8 * QUARTERS_PER_YEAR
+CLOSING_AGE = 100 * QUARTERS_PER_YEAR
+LAST_AGE = 105 * QUARTERS_PER_YEAR
+ELDER_AGE = 70 * QUARTERS_PER_YEAR
+STEEP_AGE = 85 * QUARTERS_PER_YEAR
 BOND_START = 55
 BOND_COURT = 12
 BOND_MARRY = 18
 BOND_TEND = 16
-BOND_NEGLECT_AFTER = 3
+BOND_NEGLECT_AFTER = 3 * QUARTERS_PER_YEAR
 BOND_NEGLECT_DROP = 5
 BOND_BREAK_AT = 20
 PARTNER_STATUSES = ("dating", "married")
-LINE_SPECIES = ("human", "vampire", "lycanthrope", "witch")
-CAREER_MIN_AGE = 18
 CAREER_LEVEL_MAX = 10
 FREE_FIELDS = ("labor", "service", "trade")
 FIELD_BASE = {"labor": 280, "service": 240, "trade": 320, "medicine": 640, "law": 700, "journalism": 420}
@@ -128,18 +141,47 @@ def clean_name(name: str | None, fallback: str = "Unnamed") -> str:
     return text or fallback
 
 
-def stage_for(age: int) -> str:
-    if age < 3:
+def stage_for(quarters: int) -> str:
+    if quarters < 3 * QUARTERS_PER_YEAR:
         return "infant"
-    if age < 13:
+    if quarters < 13 * QUARTERS_PER_YEAR:
         return "child"
-    if age < 18:
+    if quarters < 18 * QUARTERS_PER_YEAR:
         return "teen"
-    if age < 30:
+    if quarters < 30 * QUARTERS_PER_YEAR:
         return "young_adult"
-    if age < 60:
+    if quarters < 60 * QUARTERS_PER_YEAR:
         return "adult"
     return "elder"
+
+
+def quarters_of(character: dict[str, Any]) -> int:
+    return max(0, int(character.get("age_quarters") or 0))
+
+
+def age_label(quarters: int) -> str:
+    years = int(quarters) // QUARTERS_PER_YEAR
+    months = (int(quarters) % QUARTERS_PER_YEAR) * 3
+    if months:
+        return f"{years}y {months}m"
+    return f"{years}y"
+
+
+def set_age(character: dict[str, Any], quarters: int) -> None:
+    quarters = max(0, int(quarters))
+    character["age_quarters"] = quarters
+    character["age_years"] = quarters // QUARTERS_PER_YEAR
+    character["age_months"] = (quarters % QUARTERS_PER_YEAR) * 3
+    character["age_unit"] = "quarters"
+    character["stage"] = stage_for(quarters)
+
+
+def spread(total: int, quarters: int) -> int:
+    """Split a yearly integer across four quarters. The year-boundary quarter keeps the remainder."""
+    share, extra = divmod(int(total), QUARTERS_PER_YEAR)
+    if int(quarters) % QUARTERS_PER_YEAR < extra:
+        return share + 1
+    return share
 
 
 def public_doc(doc: dict | None) -> dict | None:
@@ -968,8 +1010,8 @@ PATH_EVENTS: dict[str, list[dict[str, Any]]] = {
 
 def closing_event(character: dict) -> dict[str, Any]:
     name = character["name"]
-    age = int(character["age_years"])
-    if age >= 105:
+    age = quarters_of(character)
+    if age >= LAST_AGE:
         return event(
             "The last account",
             f"{name} has spent the extra years. What remains is the choosing of a last room.",
@@ -980,10 +1022,10 @@ def closing_event(character: dict) -> dict[str, Any]:
         )
     return event(
         "One more season",
-        f"The year offers {name} a narrow continuation, and does not pretend it is wide.",
+        f"Three months offer {name} a narrow continuation, and do not pretend it is wide.",
         [
-            choice("Hold on", "You buy a thin year. The body sends an invoice.", {"health": -12, "happiness": 2}, {"resilience": 3}),
-            choice("Let the year close", "You stop arguing with the calendar.", {"health": -100}, fatal=True),
+            choice("Hold on", "You buy a thin season. The body sends an invoice.", {"health": -3, "happiness": 2}, {"resilience": 3}),
+            choice("Let the season close", "You stop arguing with the calendar.", {"health": -100}, fatal=True),
         ],
     )
 
@@ -1313,8 +1355,8 @@ def breakup_event(partner: dict[str, Any]) -> dict[str, Any]:
 
 
 def partner_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
-    """The next partner beat, when the life is due for one. Ordinary years return None."""
-    age = int(character["age_years"])
+    """The next partner beat, when the life is due for one. Ordinary seasons return None."""
+    age = quarters_of(character)
     if age < PARTNER_MIN_AGE:
         return None
     partner = character.get("partner") if isinstance(character.get("partner"), dict) else None
@@ -1322,7 +1364,8 @@ def partner_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
         return breakup_event(partner)
     chapter = character.get("partner_chapter")
     if not partner:
-        if age == 18 or (age > 18 and (age - 18) % 6 == 0):
+        year = age // QUARTERS_PER_YEAR
+        if age % QUARTERS_PER_YEAR == 0 and (year == 18 or (year > 18 and (year - 18) % 6 == 0)):
             return meet_event()
         return None
     if chapter == "court":
@@ -1425,8 +1468,8 @@ def grow_event(business: dict[str, Any]) -> dict[str, Any]:
 
 
 def work_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
-    """The next job or shop beat, on a year the partner system is not using."""
-    age = int(character["age_years"])
+    """The next job or shop beat, on a season the partner system is not using."""
+    age = quarters_of(character)
     if age < CAREER_MIN_AGE:
         return None
     career = character.get("career") if isinstance(character.get("career"), dict) else None
@@ -1440,14 +1483,20 @@ def work_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
         return found_event()
     if business and chapter == "grow":
         return grow_event(business)
-    if not career and chapter not in ("promote", "fire", "found", "grow") and (age == 19 or (age > 19 and (age - 19) % 8 == 0)):
+    year = age // QUARTERS_PER_YEAR
+    if (
+        not career
+        and chapter not in ("promote", "fire", "found", "grow")
+        and age % QUARTERS_PER_YEAR == 0
+        and (year == 19 or (year > 19 and (year - 19) % 8 == 0))
+    ):
         return hire_event()
     return None
 
 
 def fallback_event(character: dict, history: list[dict[str, Any]], generation: int) -> dict[str, Any]:
-    age = int(character["age_years"])
-    if age >= 100:
+    age = quarters_of(character)
+    if age >= CLOSING_AGE:
         return closing_event(character)
     due = partner_fallback(character)
     if due:
@@ -1461,21 +1510,21 @@ def fallback_event(character: dict, history: list[dict[str, Any]], generation: i
     species = character.get("species")
     if species == "vampire":
         heat = int(character.get("hunter_heat") or 0)
-        if age >= 13 and heat >= 55:
+        if age >= TRANSFORM_MIN_AGE and heat >= 55:
             pool = HUNTER_EVENTS + pool
-        elif age >= 1:
+        elif age >= QUARTERS_PER_YEAR:
             pool = VAMPIRE_EVENTS + pool
     elif species == "lycanthrope":
         moon = int(data.get("moon") or 0)
         control = int(data.get("control") or 0)
-        if age >= 13 and moon >= MOON_SHIFT_AT and control <= CONTROL_SHIFT_AT + 10:
+        if age >= TRANSFORM_MIN_AGE and moon >= MOON_SHIFT_AT and control <= CONTROL_SHIFT_AT + 10:
             pool = SHIFT_EVENTS + pool
-        elif age >= 1:
+        elif age >= QUARTERS_PER_YEAR:
             pool = LYCAN_EVENTS + pool
     elif species == "witch":
-        if age >= 13 and int(data.get("notoriety") or 0) >= NOTORIETY_HEAT_AT:
+        if age >= TRANSFORM_MIN_AGE and int(data.get("notoriety") or 0) >= NOTORIETY_HEAT_AT:
             pool = NOTORIETY_EVENTS + pool
-        elif age >= 1:
+        elif age >= QUARTERS_PER_YEAR:
             pool = WITCH_EVENTS + pool
     paths = set(character.get("unlocked_paths") or [])
     for path, extras in PATH_EVENTS.items():
@@ -1493,27 +1542,27 @@ def fallback_event(character: dict, history: list[dict[str, Any]], generation: i
 def compute_paths(character: dict, owned_packs: list[str] | None = None) -> list[str]:
     flags = character["flags"]
     stats = character["stats"]
-    age = int(character["age_years"])
+    age = quarters_of(character)
     paths: list[str] = []
-    if age >= 16 and flags["ambition"] >= 60 and flags["discipline"] >= 45:
+    if age >= 16 * QUARTERS_PER_YEAR and flags["ambition"] >= 60 and flags["discipline"] >= 45:
         paths.append("career_climber")
-    if age >= 18 and flags["honesty"] <= 35 and flags["ambition"] >= 55:
+    if age >= CAREER_MIN_AGE and flags["honesty"] <= 35 and flags["ambition"] >= 55:
         paths.append("gray_market")
-    if age >= 13 and flags["faith"] >= 65:
+    if age >= TRANSFORM_MIN_AGE and flags["faith"] >= 65:
         paths.append("devout")
-    if age >= 16 and flags["charisma"] >= 60:
+    if age >= 16 * QUARTERS_PER_YEAR and flags["charisma"] >= 60:
         paths.append("performer")
-    if age >= 18 and flags["nature"] >= 60:
+    if age >= CAREER_MIN_AGE and flags["nature"] >= 60:
         paths.append("off_grid")
     if flags["addiction"] >= 55:
         paths.append("dependent")
-    if age >= 18 and flags["aggression"] >= 65:
+    if age >= CAREER_MIN_AGE and flags["aggression"] >= 65:
         paths.append("hard_edge")
-    if age >= 22 and flags["morality"] >= 65 and flags["resilience"] >= 55:
+    if age >= 22 * QUARTERS_PER_YEAR and flags["morality"] >= 65 and flags["resilience"] >= 55:
         paths.append("pillar")
-    if age >= 18 and flags["charisma"] >= 55 and int(stats["money"]) < 200:
+    if age >= CAREER_MIN_AGE and flags["charisma"] >= 55 and int(stats["money"]) < 200:
         paths.append("transactional")
-    if age >= 18:
+    if age >= CAREER_MIN_AGE:
         owned = set(owned_packs or [])
         for pack in STORE_PACKS:
             if pack["id"] not in owned:
@@ -1619,7 +1668,10 @@ def fresh_character(
         "name": clean_name(name),
         "background": background["label"],
         "background_key": background_key,
+        "age_quarters": 0,
         "age_years": 0,
+        "age_months": 0,
+        "age_unit": "quarters",
         "stage": "infant",
         "stats": copy.deepcopy(background["stats"]),
         "flags": copy.deepcopy(background["flags"]),
@@ -1647,7 +1699,7 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
     parent_stats = parent["stats"]
     parent_flags = parent["flags"]
     if child:
-        age = max(0, int(parent["age_years"]) - int(child["born_parent_age"]))
+        age = max(0, quarters_of(parent) - int(child["born_parent_age"]))
         name = child["name"]
         background = f"Raised under {parent['name']}'s roof."
         background_key = "heir"
@@ -1659,7 +1711,7 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
         background_key = "distant"
         money = parent_stats["money"] // 5 if int(parent_stats["money"]) > 0 else 0
     stats = {
-        "health": 72 if age < 50 else 60,
+        "health": 72 if age < 50 * QUARTERS_PER_YEAR else 60,
         "happiness": clamp(48 + (int(parent_stats["family"]) - 50) // 5),
         "smarts": clamp((int(parent_stats["smarts"]) + 50) // 2),
         "looks": clamp((int(parent_stats["looks"]) + 50) // 2),
@@ -1674,11 +1726,9 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
         "name": name,
         "background": background,
         "background_key": background_key,
-        "age_years": age,
-        "stage": stage_for(age),
         "stats": stats,
         "flags": flags,
-        "life_log": [f"Continued from {parent['name']}, who died at {parent['age_years']}."],
+        "life_log": [f"Continued from {parent['name']}, who died at {age_label(quarters_of(parent))}."],
         "unlocked_paths": [],
         "children": [],
         "partner": None,
@@ -1692,6 +1742,7 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
         "hunter_heat": 0,
         "applied_grants": [],
     }
+    set_age(character, age)
     return character
 
 
@@ -1706,9 +1757,23 @@ def _migrate_character(character: dict[str, Any]) -> dict[str, Any]:
     character.setdefault("name", "Unnamed")
     character.setdefault("background", BACKGROUNDS["stable"]["label"])
     character.setdefault("background_key", "stable")
-    character.setdefault("age_years", 0)
-    character["age_years"] = max(0, int(character["age_years"]))
-    character["stage"] = stage_for(character["age_years"])
+    converting = character.get("age_unit") != "quarters" and character.get("age_quarters") is None
+    if converting:
+        years = max(0, int(character.get("age_years") or 0))
+        seen = character.get("partner_seen_age")
+        if isinstance(seen, int):
+            character["partner_seen_age"] = seen * QUARTERS_PER_YEAR
+        children = character.get("children")
+        if isinstance(children, list):
+            for child in children:
+                if isinstance(child, dict) and isinstance(child.get("born_parent_age"), int):
+                    child["born_parent_age"] = int(child["born_parent_age"]) * QUARTERS_PER_YEAR
+        raw_species = character.get("species_data")
+        if isinstance(raw_species, dict) and isinstance(raw_species.get("last_power_age"), int):
+            raw_species["last_power_age"] = int(raw_species["last_power_age"]) * QUARTERS_PER_YEAR
+        set_age(character, years * QUARTERS_PER_YEAR)
+    else:
+        set_age(character, int(character.get("age_quarters") or 0))
     stats = character.get("stats") if isinstance(character.get("stats"), dict) else {}
     flags = character.get("flags") if isinstance(character.get("flags"), dict) else {}
     base = BACKGROUNDS.get(character["background_key"], BACKGROUNDS["stable"])
@@ -1736,7 +1801,7 @@ def _migrate_character(character: dict[str, Any]) -> dict[str, Any]:
         character["partner_chapter"] = None
     else:
         if not isinstance(character.get("partner_seen_age"), int):
-            character["partner_seen_age"] = int(character["age_years"])
+            character["partner_seen_age"] = quarters_of(character)
         if character.get("partner_chapter") not in ("court", "marry", "house", "settled"):
             character["partner_chapter"] = "settled"
     character["career"] = _clean_career(character.get("career"))
@@ -1767,7 +1832,62 @@ def _migrate_character(character: dict[str, Any]) -> dict[str, Any]:
     return character
 
 
+def _lineage_death_years(years: Any) -> int:
+    text = str(years or "")
+    matched = re.search(r"(\d+)\s*y", text)
+    if matched:
+        return max(0, int(matched.group(1)))
+    numbers = re.findall(r"\d+", text)
+    if not numbers:
+        return 0
+    return max(0, int(numbers[-1]))
+
+
+def _migrate_lineage_partner(raw: Any) -> dict[str, str] | str | None:
+    if isinstance(raw, str):
+        text = raw.strip()
+        return text or None
+    if isinstance(raw, dict):
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            return None
+        status = raw.get("status") if raw.get("status") in PARTNER_STATUSES else "dating"
+        return {"name": name, "status": status}
+    return None
+
+
+def _migrate_lineage_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    try:
+        generation = max(1, int(entry.get("generation") or 1))
+    except (TypeError, ValueError):
+        generation = 1
+    entry["generation"] = generation
+    entry["name"] = str(entry.get("name") or "Unnamed")
+    species = entry.get("species") or "human"
+    entry["species"] = species if species in ("human", "vampire", "lycanthrope", "witch") else "human"
+    try:
+        age = int(entry["age_at_death"]) if entry.get("age_at_death") is not None else _lineage_death_years(entry.get("years"))
+    except (TypeError, ValueError):
+        age = _lineage_death_years(entry.get("years"))
+    entry["age_at_death"] = max(0, age)
+    if not str(entry.get("years") or "").strip():
+        entry["years"] = f"0–{entry['age_at_death']}y"
+    if "cause_of_death" not in entry:
+        entry["cause_of_death"] = None
+    entry["partner"] = _migrate_lineage_partner(entry.get("partner"))
+    entry["heir_id"] = str(entry.get("heir_id") or "")
+    entry["heir_name"] = str(entry.get("heir_name") or "")
+    entry["epitaph"] = str(entry.get("epitaph") or "")
+    return entry
+
+
 def _migrate_save(save: dict[str, Any]) -> dict[str, Any]:
+    character = save.get("character") if isinstance(save.get("character"), dict) else None
+    converting = isinstance(character, dict) and character.get("age_unit") != "quarters" and character.get("age_quarters") is None
+    if converting and isinstance(save.get("history"), list):
+        for item in save["history"]:
+            if isinstance(item, dict) and isinstance(item.get("age"), int):
+                item["age"] = int(item["age"]) * QUARTERS_PER_YEAR
     save.setdefault("generation", 1)
     save["generation"] = max(1, int(save["generation"]))
     save.setdefault("alive", True)
@@ -1784,13 +1904,7 @@ def _migrate_save(save: dict[str, Any]) -> dict[str, Any]:
         save["history"] = []
     if not isinstance(save["lineage"], list):
         save["lineage"] = []
-    else:
-        cleaned_line: list[dict[str, Any]] = []
-        for entry in save["lineage"]:
-            normalized = normalize_lineage_entry(entry)
-            if normalized:
-                cleaned_line.append(normalized)
-        save["lineage"] = cleaned_line
+    save["lineage"] = [_migrate_lineage_entry(item) for item in save["lineage"] if isinstance(item, dict)]
     if isinstance(save.get("character"), dict):
         save["character"] = _migrate_character(save["character"])
     return save
@@ -1812,7 +1926,7 @@ def _migrate_profile(profile: dict[str, Any]) -> dict[str, Any]:
 
 def marks_for_life(character: dict[str, Any], generation: int) -> int:
     reputation = int(character["stats"]["reputation"])
-    age = int(character["age_years"])
+    age = quarters_of(character) // QUARTERS_PER_YEAR
     return 50 + (reputation // 2) + (age // 2) + int(generation) * 10
 
 
@@ -1837,11 +1951,11 @@ def _partner_now(character: dict[str, Any]) -> dict[str, Any] | None:
 
 def apply_partner(character: dict[str, Any], picked: dict[str, Any]) -> None:
     """The only writer for character.partner. Marriage sticks only after dating."""
-    age = int(character["age_years"])
+    age = quarters_of(character)
     current = _partner_now(character)
     if picked.get("partner_end") is True:
         if current:
-            character["life_log"].append(f"Age {age}: {current['name']} left the record.")
+            character["life_log"].append(f"Age {age_label(age)}: {current['name']} left the record.")
         character["partner"] = None
         character["partner_seen_age"] = None
         character["partner_chapter"] = None
@@ -1864,7 +1978,7 @@ def apply_partner(character: dict[str, Any], picked: dict[str, Any]) -> None:
         current["bond"] = clamp(int(current.get("bond") or 0) + BOND_MARRY)
         character["partner_seen_age"] = age
         character["partner_chapter"] = "house"
-        character["life_log"].append(f"Age {age}: Married {name}.")
+        character["life_log"].append(f"Age {age_label(age)}: Married {name}.")
         return
     if current and current.get("name") == name:
         current["bond"] = clamp(int(current.get("bond") or 0) + BOND_COURT)
@@ -1876,7 +1990,7 @@ def apply_partner(character: dict[str, Any], picked: dict[str, Any]) -> None:
     character["partner"] = {"name": name, "status": "dating", "bond": BOND_START}
     character["partner_seen_age"] = age
     character["partner_chapter"] = "court"
-    character["life_log"].append(f"Age {age}: Met {name}.")
+    character["life_log"].append(f"Age {age_label(age)}: Met {name}.")
 
 
 def pay_for(field: str, level: int) -> int:
@@ -1895,7 +2009,7 @@ def career_block(character: dict[str, Any], picked: dict[str, Any], owned_packs:
     incoming = picked.get("career_start")
     if not isinstance(incoming, dict):
         return None
-    if int(character["age_years"]) < CAREER_MIN_AGE:
+    if quarters_of(character) < CAREER_MIN_AGE:
         return "A career waits until eighteen."
     if not field_open(str(incoming.get("field") or ""), owned_packs):
         return "That field is not open to you."
@@ -1946,7 +2060,7 @@ def _business_delta(swing: Any) -> int | None:
 
 
 def apply_work(character: dict[str, Any], picked: dict[str, Any]) -> None:
-    age = int(character["age_years"])
+    age = quarters_of(character)
     incoming = picked.get("career_start")
     if isinstance(incoming, dict) and age >= CAREER_MIN_AGE:
         title = clean_name(str(incoming.get("title") or ""), "")
@@ -1954,7 +2068,7 @@ def apply_work(character: dict[str, Any], picked: dict[str, Any]) -> None:
         if title and field:
             character["career"] = {"title": title, "field": field, "level": 1, "income": pay_for(field, 1)}
             character["work_chapter"] = "promote"
-            character["life_log"].append(f"Age {age}: Hired as {title}.")
+            character["life_log"].append(f"Age {age_label(age)}: Hired as {title}.")
     step = picked.get("career_level")
     if step in (1, -1):
         step = "up" if step == 1 else "down"
@@ -1968,7 +2082,7 @@ def apply_work(character: dict[str, Any], picked: dict[str, Any]) -> None:
         title = str(character["career"]["title"])
         character["career"] = None
         character["work_chapter"] = "found"
-        character["life_log"].append(f"Age {age}: Left {title}.")
+        character["life_log"].append(f"Age {age_label(age)}: Left {title}.")
     shop = picked.get("business_start")
     if isinstance(shop, dict) and not isinstance(character.get("business"), dict):
         name = clean_name(str(shop.get("name") or ""), "")
@@ -1976,7 +2090,7 @@ def apply_work(character: dict[str, Any], picked: dict[str, Any]) -> None:
         if name and kind:
             character["business"] = {"name": name, "type": kind, "value": BUSINESS_START_VALUE}
             character["work_chapter"] = "grow"
-            character["life_log"].append(f"Age {age}: Opened {name}.")
+            character["life_log"].append(f"Age {age_label(age)}: Opened {name}.")
     business = character.get("business") if isinstance(character.get("business"), dict) else None
     delta = _business_delta(picked.get("business_event"))
     if business and delta is not None:
@@ -2000,7 +2114,7 @@ def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
         character["flags"][flag] = clamp(int(character["flags"][flag]) + clamp_delta(delta, 40))
     apply_partner(character, picked)
     apply_work(character, picked)
-    if picked.get("child_born") and int(character["age_years"]) >= 16:
+    if picked.get("child_born") and quarters_of(character) >= CHILD_MIN_AGE:
         existing = character["children"]
         fallback = CHILD_NAMES[len(existing) % len(CHILD_NAMES)]
         child_name = clean_name(picked.get("child_name"), fallback)
@@ -2009,7 +2123,7 @@ def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
         child = {
             "id": str(uuid.uuid4()),
             "name": child_name,
-            "born_parent_age": int(character["age_years"]),
+            "born_parent_age": quarters_of(character),
         }
         parent = _partner_now(character)
         if parent:
@@ -2072,29 +2186,44 @@ def apply_species_effects(character: dict[str, Any], effects: Any) -> None:
 
 
 def tick_partner(character: dict[str, Any]) -> None:
-    """Years without a partner beat cool the bond. A very low bond is a breakup year."""
+    """Seasons without a partner beat cool the bond. A very low bond is a breakup."""
     partner = _partner_now(character)
     if not partner:
         return
-    age = int(character["age_years"])
+    age = quarters_of(character)
     seen = character.get("partner_seen_age")
     if not isinstance(seen, int):
         character["partner_seen_age"] = age
         return
-    if age - seen < BOND_NEGLECT_AFTER:
+    gap = age - seen
+    if gap < BOND_NEGLECT_AFTER or gap % QUARTERS_PER_YEAR != 0:
         return
     partner["bond"] = clamp(int(partner.get("bond") or 0) - BOND_NEGLECT_DROP)
 
 
+def business_quarter_growth(value: int, age: int) -> int:
+    """One quarter of this year's compound, rated from the value at the start of the year."""
+    slot = int(age) % QUARTERS_PER_YEAR
+    prior = 3 if slot == 0 else slot - 1
+    yearly = max(1, int(value) // BUSINESS_GROWTH_DIVISOR)
+    if prior:
+        peeled = int(value)
+        for step in range(prior, 0, -1):
+            peeled -= spread(yearly, int(age) - step)
+        yearly = max(1, max(0, peeled) // BUSINESS_GROWTH_DIVISOR)
+    return spread(yearly, age)
+
+
 def tick_livelihood(character: dict[str, Any]) -> None:
+    age = quarters_of(character)
     career = character.get("career") if isinstance(character.get("career"), dict) else None
     if career:
-        character["stats"]["money"] = clamp_money(int(character["stats"]["money"]) + int(career.get("income") or 0))
+        character["stats"]["money"] = clamp_money(int(character["stats"]["money"]) + spread(int(career.get("income") or 0), age))
     business = character.get("business") if isinstance(character.get("business"), dict) else None
     if not business:
         return
     value = int(business.get("value") or 0)
-    business["value"] = value + max(1, value // BUSINESS_GROWTH_DIVISOR)
+    business["value"] = value + business_quarter_growth(value, age)
 
 
 def hunter_pressure(character: dict[str, Any]) -> str | None:
@@ -2107,42 +2236,45 @@ def tick_lycanthrope(character: dict[str, Any]) -> None:
     data = character.get("species_data")
     if not isinstance(data, dict):
         return
-    age = int(character["age_years"])
-    data["moon"] = MOON_PHASES[age % len(MOON_PHASES)]
+    age = quarters_of(character)
+    if age % QUARTERS_PER_YEAR != 0:
+        return
+    data["moon"] = MOON_PHASES[(age // QUARTERS_PER_YEAR) % len(MOON_PHASES)]
     control = int(data.get("control") or 0)
     if int(data["moon"]) < MOON_SHIFT_AT or control > CONTROL_SHIFT_AT:
         return
-    character["stats"]["health"] = clamp(int(character["stats"]["health"]) - 12)
-    character["stats"]["happiness"] = clamp(int(character["stats"]["happiness"]) - 8)
-    character["stats"]["reputation"] = clamp(int(character["stats"]["reputation"]) - 10)
-    character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + 16)
-    data["control"] = clamp(control - 6)
-    character["life_log"].append(f"Age {age}: The moon took the body. Morning found the story already walking around town.")
+    character["stats"]["health"] = clamp(int(character["stats"]["health"]) - SHIFT_HEALTH)
+    character["stats"]["happiness"] = clamp(int(character["stats"]["happiness"]) - SHIFT_HAPPINESS)
+    character["stats"]["reputation"] = clamp(int(character["stats"]["reputation"]) - SHIFT_REPUTATION)
+    character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + SHIFT_HEAT)
+    data["control"] = clamp(control - SHIFT_CONTROL)
+    character["life_log"].append(f"Age {age_label(age)}: The moon took the body. Morning found the story already walking around town.")
 
 
 def tick_witch(character: dict[str, Any]) -> None:
     data = character.get("species_data")
     if not isinstance(data, dict):
         return
-    data["mana"] = clamp(int(data.get("mana") or 0) + MANA_YEARLY)
-    if int(data.get("notoriety") or 0) < NOTORIETY_HEAT_AT:
+    age = quarters_of(character)
+    data["mana"] = clamp(int(data.get("mana") or 0) + spread(MANA_YEARLY, age))
+    if age % QUARTERS_PER_YEAR != 0 or int(data.get("notoriety") or 0) < NOTORIETY_HEAT_AT:
         return
-    character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + 8)
-    age = int(character["age_years"])
-    character["life_log"].append(f"Age {age}: The working was noticed. Someone wrote the night down.")
+    character["hunter_heat"] = clamp(int(character.get("hunter_heat") or 0) + NOTORIETY_HEAT_YEARLY)
+    character["life_log"].append(f"Age {age_label(age)}: The working was noticed. Someone wrote the night down.")
 
 
-def advance_life(character: dict[str, Any], owned_packs: list[str]) -> str | None:
-    """Age one year. Species meters tick, and hunter heat can close the life."""
-    character["age_years"] = int(character["age_years"]) + 1
-    character["stage"] = stage_for(character["age_years"])
-    age = character["age_years"]
-    if age >= 70:
-        drop = 1 if age < 85 else 3
-        character["stats"]["health"] = clamp(int(character["stats"]["health"]) - drop)
+def advance_quarter(character: dict[str, Any], owned_packs: list[str]) -> str | None:
+    """Age one quarter. Species meters tick, and hunter heat can close the life."""
+    set_age(character, quarters_of(character) + 1)
+    age = quarters_of(character)
+    if age >= ELDER_AGE:
+        yearly = 1 if age < STEEP_AGE else 3
+        drop = spread(yearly, age)
+        if drop:
+            character["stats"]["health"] = clamp(int(character["stats"]["health"]) - drop)
     species = character.get("species")
     if species == "vampire":
-        add_bloodlust(character, BLOODLUST_YEARLY)
+        add_bloodlust(character, spread(BLOODLUST_YEARLY, age))
     elif species == "lycanthrope":
         tick_lycanthrope(character)
     elif species == "witch":
@@ -2211,7 +2343,7 @@ def trim_log(entries: list[Any], limit: int = 160) -> None:
 def obituary(save: dict[str, Any]) -> str:
     character = save["character"]
     name = character["name"]
-    age = character["age_years"]
+    age = age_label(quarters_of(character))
     cause = save.get("cause_of_death") or "The record does not say."
     partner = character.get("partner") if isinstance(character.get("partner"), dict) else None
     spouse = ""
@@ -2231,82 +2363,24 @@ def partner_record(character: dict[str, Any]) -> dict[str, str] | None:
     return {"name": str(partner["name"]), "status": status}
 
 
-def _lineage_age(raw: dict[str, Any]) -> int:
-    direct = raw.get("age_at_death")
-    if isinstance(direct, bool):
-        direct = None
-    if isinstance(direct, (int, float)) and int(direct) >= 0:
-        return int(direct)
-    if isinstance(direct, str) and direct.isdigit():
-        return int(direct)
-    years = raw.get("years")
-    if isinstance(years, str):
-        tail = re.split(r"[–\-]", years)[-1].strip().rstrip("y")
-        if tail.isdigit():
-            return int(tail)
-    return 0
-
-
-def _lineage_partner(raw: Any) -> dict[str, str] | str | None:
-    if isinstance(raw, str):
-        name = clean_name(raw, "")
-        return name or None
-    if not isinstance(raw, dict):
-        return None
-    name = clean_name(str(raw.get("name") or ""), "")
-    if not name:
-        return None
-    status = raw.get("status") if raw.get("status") in PARTNER_STATUSES else "dating"
-    return {"name": name, "status": status}
-
-
-def normalize_lineage_entry(raw: Any) -> dict[str, Any] | None:
-    if not isinstance(raw, dict):
-        return None
-    name = clean_name(str(raw.get("name") or ""), "")
-    if not name:
-        return None
-    species = raw.get("species") if raw.get("species") in LINE_SPECIES else "human"
-    age = _lineage_age(raw)
-    try:
-        generation = max(1, int(raw.get("generation") or 1))
-    except (TypeError, ValueError):
-        generation = 1
-    cause = raw.get("cause_of_death")
-    return {
-        "generation": generation,
-        "name": name,
-        "species": species,
-        "age_at_death": age,
-        "years": f"0–{age}",
-        "cause_of_death": None if cause is None else str(cause),
-        "partner": _lineage_partner(raw.get("partner")),
-        "heir_id": str(raw.get("heir_id") or ""),
-        "heir_name": clean_name(str(raw.get("heir_name") or ""), ""),
-        "epitaph": str(raw.get("epitaph") or ""),
-    }
-
-
 def epitaph(save: dict[str, Any], heir_id: str, heir_name: str) -> dict[str, Any]:
     character = save["character"]
-    species = character.get("species") if character.get("species") in LINE_SPECIES else "human"
-    age = max(0, int(character["age_years"]))
-    record = normalize_lineage_entry(
-        {
-            "generation": int(save["generation"]),
-            "name": character["name"],
-            "species": species,
-            "age_at_death": age,
-            "cause_of_death": save.get("cause_of_death"),
-            "partner": partner_record(character),
-            "heir_id": heir_id,
-            "heir_name": heir_name,
-            "epitaph": obituary(save),
-        }
-    )
-    if record is None:
-        raise RuntimeError("epitaph requires a name")
-    return record
+    quarters = quarters_of(character)
+    species = character.get("species") or "human"
+    if species not in ("human", "vampire", "lycanthrope", "witch"):
+        species = "human"
+    return {
+        "generation": int(save["generation"]),
+        "name": character["name"],
+        "years": f"0–{age_label(quarters)}",
+        "species": species,
+        "age_at_death": quarters // QUARTERS_PER_YEAR,
+        "cause_of_death": save.get("cause_of_death"),
+        "partner": partner_record(character),
+        "heir_id": heir_id,
+        "heir_name": heir_name,
+        "epitaph": obituary(save),
+    }
 
 
 def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | None:
@@ -2339,16 +2413,16 @@ def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | Non
         milestone = item.get("milestone")
         if isinstance(milestone, str) and milestone.strip():
             row["milestone"] = milestone.strip()[:180]
-        if item.get("fatal") is True and int(character["age_years"]) >= 8:
+        if item.get("fatal") is True and quarters_of(character) >= FATAL_MIN_AGE:
             row["fatal"] = True
-        if item.get("child_born") is True and int(character["age_years"]) >= 16:
+        if item.get("child_born") is True and quarters_of(character) >= CHILD_MIN_AGE:
             row["child_born"] = True
             if isinstance(item.get("child_name"), str) and item["child_name"].strip():
                 row["child_name"] = clean_name(item["child_name"])
         if item.get("partner_end") is True:
             row["partner_end"] = True
         start = item.get("career_start")
-        if isinstance(start, dict) and int(character["age_years"]) >= CAREER_MIN_AGE:
+        if isinstance(start, dict) and quarters_of(character) >= CAREER_MIN_AGE:
             title = clean_name(str(start.get("title") or ""), "")
             field = field_slug(start.get("field"))
             open_field = field in FREE_FIELDS or f"career:{field}" in set(character.get("unlocked_paths") or [])
@@ -2371,7 +2445,7 @@ def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | Non
         if swing is not None:
             row["business_event"] = swing
         incoming = item.get("partner_set")
-        if isinstance(incoming, dict) and int(character["age_years"]) >= PARTNER_MIN_AGE and incoming.get("status") in PARTNER_STATUSES:
+        if isinstance(incoming, dict) and quarters_of(character) >= PARTNER_MIN_AGE and incoming.get("status") in PARTNER_STATUSES:
             partner_name = clean_name(str(incoming.get("name") or ""), "")
             if partner_name:
                 row["partner_set"] = {"name": partner_name, "status": incoming["status"]}
@@ -2392,13 +2466,23 @@ def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | Non
 def build_context(character: dict[str, Any], history: list[dict[str, Any]], owned_packs: list[str], generation: int) -> str:
     unlocked = unlocks_from_packs(owned_packs)
     recent = [
-        {"age": item.get("age"), "title": item.get("title"), "choice": item.get("choice"), "outcome": item.get("outcome")}
+        {"age": age_label(int(item.get("age") or 0)), "title": item.get("title"), "choice": item.get("choice"), "outcome": item.get("outcome")}
         for item in history[-8:]
     ]
+    children = []
+    for child in character.get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        row = dict(child)
+        row["born_at"] = age_label(int(child.get("born_parent_age") or 0))
+        children.append(row)
+    age = quarters_of(character)
     payload = {
         "generation": generation,
         "name": character["name"],
-        "age": character["age_years"],
+        "age": age_label(age),
+        "age_years": age // QUARTERS_PER_YEAR,
+        "age_months": (age % QUARTERS_PER_YEAR) * 3,
         "stage": character["stage"],
         "background": character["background"],
         "species": character.get("species") or "human",
@@ -2412,18 +2496,18 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         "unlocked_paths": character.get("unlocked_paths") or [],
         "owned_careers": unlocked["careers"],
         "owned_cosmetics": unlocked["cosmetics"],
-        "children": character.get("children") or [],
+        "children": children,
         "partner": character.get("partner"),
         "other_parent": (_partner_now(character) or {}).get("name"),
         "career": character.get("career"),
         "business": character.get("business"),
         "life_story_so_far": (character.get("life_log") or [])[-24:],
-        "recent_years": recent,
+        "recent_seasons": recent,
     }
     return json.dumps(payload, indent=2, default=str)
 
 
-SYSTEM_PROMPT = """You write one year of LEGACY, a dark, dry, store-safe life simulator for adults.
+SYSTEM_PROMPT = """You write three months of LEGACY, a dark, dry, store-safe life simulator for adults.
 Return ONLY a JSON object with this shape:
 {
   "title": "short",
@@ -2451,26 +2535,26 @@ Return ONLY a JSON object with this shape:
 }
 Rules:
 - 2 to 4 choices. Each must change the life in a different direction.
-- Continuity: use the name, age, flags, children, partner, career, business, species, subtype, pack, coven, and life_story_so_far. Do not contradict them.
-- Never repeat a title or situation from recent_years.
-- If unlocked_paths or owned_careers are present, let some years branch into them. Ignore empty lists.
-- When species is not human, write the year through that body.
-- Vampire: use clan, bloodlust, masquerade, and hunter_heat. Some years are hunger, a feeding told only as an absence and a rumor, the clan, the masquerade, or hunters when hunter_heat is high. A feeding is never a method and never a wound.
-- Lycanthrope: use subtype, moon, control, and pack. Some years follow the moon as it climbs toward full. If moon is high and control is low, write an uncontrolled shift as a missing night and a story in town, never as a wound or a method. The pack may be in the year when pack is not null.
-- Witch: use mana, notoriety, and coven. Some years are a ritual told by its result, the coven, or notice when notoriety is high. A ritual is never a recipe. Flashy magic raises notoriety and can raise hunter_heat.
+- Continuity: use the name, age, flags, children, partner, career, business, species, subtype, pack, coven, and life_story_so_far. Do not contradict them. Three months pass in this event, not a year.
+- Never repeat a title or situation from recent_seasons.
+- If unlocked_paths or owned_careers are present, let some seasons branch into them. Ignore empty lists.
+- When species is not human, write the season through that body.
+- Vampire: use clan, bloodlust, masquerade, and hunter_heat. Some seasons are hunger, a feeding told only as an absence and a rumor, the clan, the masquerade, or hunters when hunter_heat is high. A feeding is never a method and never a wound.
+- Lycanthrope: use subtype, moon, control, and pack. Some seasons follow the moon as it climbs toward full. If moon is high and control is low, write an uncontrolled shift as a missing night and a story in town, never as a wound or a method. The pack may be in the season when pack is not null.
+- Witch: use mana, notoriety, and coven. Some seasons are a ritual told by its result, the coven, or notice when notoriety is high. A ritual is never a recipe. Flashy magic raises notoriety and can raise hunter_heat.
 - species_effects uses only the meters that belong to the species: vampire bloodlust, masquerade, hunter_heat; lycanthrope moon, control, hunter_heat; witch mana, notoriety, hunter_heat. Small integers. Omit the block when species is human.
 - Imply mature trouble (debt, desire, addiction, violence, hustles) by consequence, never by instruction.
 - No explicit sexual content. No graphic injury. No real-world how-to for crime, drugs, or self-harm.
 - fatal may be true only in late life, when health is already collapsing, or when hunter_heat is already 70 or higher and age is at least 13.
-- child_born only if age is at least 18, and at most one choice should offer it. If partner is set, that partner is the other parent: name them in the narrative.
-- partner is null or {name, status, bond}. status is "dating" or "married". bond is 0–100 and is not yours to set; the year only starts, keeps, or ends the partnership.
-- From age 16, a year may meet someone with partner_set {name, status: "dating"} when partner is null. Use one plain first name.
+- child_born only if age_years is at least 18, and at most one choice should offer it. If partner is set, that partner is the other parent: name them in the narrative.
+- partner is null or {name, status, bond}. status is "dating" or "married". bond is 0–100 and is not yours to set; the season only starts, keeps, or ends the partnership.
+- From age 16, a season may meet someone with partner_set {name, status: "dating"} when partner is null. Use one plain first name.
 - Court the person already dating you with partner_set using that same name and status "dating".
 - partner_set status "married" only applies when partner.status is already "dating" and the name is theirs. Otherwise omit it.
 - partner_end true ends the partnership. Do not also set a partner on that choice.
-- If bond is 20 or lower, write a year in which the partnership might end: one choice stays, one choice leaves.
+- If bond is 20 or lower, write a season in which the partnership might end: one choice stays, one choice leaves.
 - Meet, court, marry, and breakup years should be concrete and store-safe. No explicit sexual content.
-- career is null or {title, field, level, income}. business is null or {name, type, value}. When either is set, some years are the job, the boss, or the shop. Do not invent a job or a shop that is not on the record.
+- career is null or {title, field, level, income}. business is null or {name, type, value}. When either is set, some seasons are the job, the boss, or the shop. Do not invent a job or a shop that is not on the record. income is a yearly wage; this season pays about a quarter of it.
 - From age 18, career_start {title, field} hires them. Free fields are labor, service, and trade. medicine, law, and journalism only if that field is in owned_careers. Otherwise omit the start.
 - career_level is "up" or "down", and only for a job they already hold. career_leave true ends the job.
 - business_start {name, type} opens a shop when business is null. business_event is an integer swing in the shop's value, hundreds not millions, and only when a business exists.
@@ -2547,7 +2631,7 @@ def event_blocks_skip(event: Any) -> bool:
 
 def skip_year_drift(character: dict[str, Any]) -> None:
     """A quiet year nudges meters by a point or two. No windfall and no collapse on its own."""
-    age = int(character["age_years"])
+    age = quarters_of(character) // QUARTERS_PER_YEAR
     for index, key in enumerate(METER_STATS):
         delta = ((age * 3 + index * 2) % 5) - 2
         character["stats"][key] = clamp(int(character["stats"][key]) + delta)
@@ -2559,10 +2643,11 @@ def skip_year_drift(character: dict[str, Any]) -> None:
 
 
 def _quiet_year_line(character: dict[str, Any], age: int, ended: str | None) -> str:
+    label = age_label(age)
     if ended:
-        return f"Age {age}. The quiet ran out. {ended}"
-    if age >= 100:
-        return f"Age {age}. The years narrowed, and the next one will not be quiet."
+        return f"Age {label}. The quiet ran out. {ended}"
+    if age >= CLOSING_AGE:
+        return f"Age {label}. The years narrowed, and the next one will not be quiet."
     name = character.get("name") or "You"
     partner = _partner_now(character)
     career = character.get("career") if isinstance(character.get("career"), dict) else None
@@ -2570,36 +2655,36 @@ def _quiet_year_line(character: dict[str, Any], age: int, ended: str | None) -> 
     species = character.get("species") or "human"
     slot = age % 3
     if partner and slot == 0:
-        return f"Age {age}. {partner['name']} was still in the house. The year did not ask for a decision."
+        return f"Age {label}. {partner['name']} was still in the house. The year did not ask for a decision."
     if career and slot == 1:
         title = career.get("title") or "work"
-        return f"Age {age}. The {title} work stayed. Pay arrived. Nothing was promoted and nothing was lost."
+        return f"Age {label}. The {title} work stayed. Pay arrived. Nothing was promoted and nothing was lost."
     if business and slot == 2:
         shop = business.get("name") or "The shop"
-        return f"Age {age}. {shop} opened and closed on the usual days."
+        return f"Age {label}. {shop} opened and closed on the usual days."
     if species == "vampire":
         lines = (
-            f"Age {age}. {name} kept the evenings small and the curtains closed.",
-            f"Age {age}. Hunger stayed a private fact. The street did not learn a name.",
-            f"Age {age}. Another year of being careful after dark.",
+            f"Age {label}. {name} kept the evenings small and the curtains closed.",
+            f"Age {label}. Hunger stayed a private fact. The street did not learn a name.",
+            f"Age {label}. Another year of being careful after dark.",
         )
     elif species == "lycanthrope":
         lines = (
-            f"Age {age}. The moon came and went. Mornings were accounted for.",
-            f"Age {age}. {name} stayed where the county already knew the nights.",
-            f"Age {age}. Control held, mostly. The town told no new story.",
+            f"Age {label}. The moon came and went. Mornings were accounted for.",
+            f"Age {label}. {name} stayed where the county already knew the nights.",
+            f"Age {label}. Control held, mostly. The town told no new story.",
         )
     elif species == "witch":
         lines = (
-            f"Age {age}. The work stayed in the kitchen and off the street.",
-            f"Age {age}. {name} did nothing anyone would repeat.",
-            f"Age {age}. A quiet year. The craft was not the news.",
+            f"Age {label}. The work stayed in the kitchen and off the street.",
+            f"Age {label}. {name} did nothing anyone would repeat.",
+            f"Age {label}. A quiet year. The craft was not the news.",
         )
     else:
         lines = (
-            f"Age {age}. The year was ordinary, which is a kind of luck.",
-            f"Age {age}. Days stacked without a story worth retelling.",
-            f"Age {age}. {name} kept the same habits and the same address.",
+            f"Age {label}. The year was ordinary, which is a kind of luck.",
+            f"Age {label}. Days stacked without a story worth retelling.",
+            f"Age {label}. {name} kept the same habits and the same address.",
         )
     return lines[slot]
 
@@ -2622,8 +2707,9 @@ def _clean_montage(raw: Any, years: list[dict[str, Any]]) -> dict[str, Any] | No
         if not text:
             return None
         age = int(year["age"])
-        if str(age) not in text:
-            text = f"Age {age}. {text}"
+        label = age_label(age)
+        if label not in text and str(age // QUARTERS_PER_YEAR) not in text:
+            text = f"Age {label}. {text}"
         lines.append(text[:280])
     summary = " ".join(str(raw.get("text") or "").split())
     summary = "".join(ch for ch in summary if ch.isprintable()).strip()
@@ -2633,10 +2719,10 @@ def _clean_montage(raw: Any, years: list[dict[str, Any]]) -> dict[str, Any] | No
 
 
 MONTAGE_PROMPT = """You write a quiet montage for LEGACY, a dark, dry, store-safe life simulator for adults.
-The player let a few uneventful years pass. Return ONLY a JSON object:
-{"lines": ["Age N. one or two sentences."], "text": "those lines as one short summary"}
+The player let a few uneventful years pass. Each year is four seasons. Return ONLY a JSON object:
+{"lines": ["Age Ny. one or two sentences."], "text": "those lines as one short summary"}
 Rules:
-- One line per age in the years list, in order. Do not add or skip a year.
+- One line per age in the years list, in order. Do not add or skip a year. Age is stored in quarters; write it as years and months (24y, or 24y 9m).
 - Quiet years only. No marriage, no birth, no new job, no breakup, no shop opening, no promotion.
 - If a year has ended set, that line is the end of the life, in plain words, and it is the last line.
 - Second person or the character's name. Concrete. No purple prose.
@@ -2686,7 +2772,6 @@ async def compose_montage(character: dict[str, Any], years: list[dict[str, Any]]
     if generated:
         return generated
     return fallback_montage(character, years)
-
 
 
 # --- storage -----------------------------------------------------------------
@@ -3173,16 +3258,17 @@ async def game_transform(body: TransformIn, user: dict[str, Any] = Depends(curre
         raise HTTPException(status_code=409, detail="The blood is already in you.")
     if character.get("species") != "human":
         raise HTTPException(status_code=409, detail="This life has already changed.")
-    if int(character["age_years"]) < 13:
+    if quarters_of(character) < TRANSFORM_MIN_AGE:
         raise HTTPException(status_code=403, detail="The change waits until thirteen.")
     character["species"], character["species_data"] = species_payload(requested, body.clan, body.subtype)
     data = character["species_data"] or {}
+    stamp = age_label(quarters_of(character))
     if requested == "vampire":
-        line = f"Age {character['age_years']}: The blood took. {data.get('clan')} will know the name."
+        line = f"Age {stamp}: The blood took. {data.get('clan')} will know the name."
     elif requested == "lycanthrope":
-        line = f"Age {character['age_years']}: The bite took. The {data.get('subtype')} will answer the moon."
+        line = f"Age {stamp}: The bite took. The {data.get('subtype')} will answer the moon."
     else:
-        line = f"Age {character['age_years']}: The working woke. {data.get('coven', {}).get('name', 'The coven')} will know the name."
+        line = f"Age {stamp}: The working woke. {data.get('coven', {}).get('name', 'The coven')} will know the name."
     character["life_log"].append(line)
     trim_log(character["life_log"])
     await persist_save(save)
@@ -3202,8 +3288,9 @@ async def game_supernatural(body: SupernaturalIn, user: dict[str, Any] = Depends
     if not action:
         raise HTTPException(status_code=400, detail="That is not a power you hold.")
     data = character["species_data"]
-    age = int(character["age_years"])
-    if data.get("last_power_age") == age:
+    age = quarters_of(character)
+    last_power = data.get("last_power_age")
+    if isinstance(last_power, int) and last_power // QUARTERS_PER_YEAR == age // QUARTERS_PER_YEAR:
         raise HTTPException(status_code=409, detail="You already spent this year's power.")
     pending = {key: action[key] for key in SPECIES_EFFECT_KEYS if key in action}
     if int(pending.get("mana") or 0) < 0 and int(data.get("mana") or 0) + int(pending["mana"]) < 0:
@@ -3219,7 +3306,7 @@ async def game_supernatural(body: SupernaturalIn, user: dict[str, Any] = Depends
         else:
             character["stats"][stat] = clamp(int(character["stats"][stat]) + amount)
     outcome = str(action["outcome"])
-    character["life_log"].append(f"Age {age}: {outcome}")
+    character["life_log"].append(f"Age {age_label(age)}: {outcome}")
     trim_log(character["life_log"])
     save["last_outcome"] = outcome
     pressure = hunter_pressure(character)
@@ -3267,9 +3354,9 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
     blocked = career_block(character, picked, owned)
     if blocked:
         raise HTTPException(status_code=403, detail=blocked)
-    age_now = int(character["age_years"])
+    age_now = quarters_of(character)
     apply_choice(character, picked)
-    line = f"Age {age_now}: {event_now.get('title')} — {picked.get('label')}."
+    line = f"Age {age_label(age_now)}: {event_now.get('title')} — {picked.get('label')}."
     character["life_log"].append(line)
     if picked.get("milestone"):
         character["life_log"].append(str(picked["milestone"])[:180])
@@ -3297,12 +3384,12 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
         await finish_death(save, cause)
         save["current_event"] = None
     else:
-        year_cause = advance_life(character, owned)
+        year_cause = advance_quarter(character, owned)
         if year_cause:
             save["true_death"] = True
             await finish_death(save, year_cause)
             save["current_event"] = None
-        elif int(character["stats"]["health"]) <= 0 or int(character["age_years"]) >= 105:
+        elif int(character["stats"]["health"]) <= 0 or quarters_of(character) >= LAST_AGE:
             await finish_death(save, "The body kept its own calendar.")
             save["current_event"] = None
         else:
@@ -3323,33 +3410,44 @@ async def game_skip(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
     if not save or not save.get("alive"):
         raise HTTPException(status_code=409, detail="This life is already over")
     character = save["character"]
-    if int(character["age_years"]) >= 100:
+    if quarters_of(character) >= CLOSING_AGE:
         raise HTTPException(status_code=409, detail="This life is already at its end.")
     if event_blocks_skip(save.get("current_event")):
-        raise HTTPException(status_code=409, detail="This year cannot be skipped.")
+        raise HTTPException(status_code=409, detail="This season cannot be skipped.")
     before = {key: int(character["stats"][key]) for key in STAT_KEYS}
     years: list[dict[str, Any]] = []
     cause: str | None = None
     true_death = False
     for _ in range(SKIP_YEARS):
-        hunter_cause = advance_life(character, owned)
-        age = int(character["age_years"])
-        if hunter_cause:
-            cause = hunter_cause
-            true_death = True
-        elif int(character["stats"]["health"]) <= 0 or age >= 105:
-            cause = AGE_END_CAUSE
-        else:
+        for _quarter in range(QUARTERS_PER_YEAR):
+            hunter_cause = advance_quarter(character, owned)
+            if hunter_cause:
+                cause = hunter_cause
+                true_death = True
+                break
+            if int(character["stats"]["health"]) <= 0 or quarters_of(character) >= LAST_AGE:
+                cause = AGE_END_CAUSE
+                break
+        if cause is None:
             skip_year_drift(character)
             if int(character["stats"]["health"]) <= 0:
                 cause = AGE_END_CAUSE
-        years.append({"age": age, "ended": cause})
-        if cause or age >= 100:
+        years.append({"age": quarters_of(character), "ended": cause})
+        if cause or quarters_of(character) >= CLOSING_AGE:
             break
     montage = await compose_montage(character, years)
     for line in montage["lines"]:
         character["life_log"].append(line)
     trim_log(character["life_log"])
+    save["history"].append(
+        {
+            "age": quarters_of(character),
+            "title": "A few quiet years",
+            "choice": "Let them pass",
+            "outcome": montage["text"][:400],
+        }
+    )
+    trim_log(save["history"])
     save["last_outcome"] = montage["text"][:400]
     if cause:
         if true_death:
@@ -3363,7 +3461,7 @@ async def game_skip(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
     return {
         "years_skipped": len(years),
         "montage": montage,
-        "new_age": int(character["age_years"]),
+        "new_age": quarters_of(character) // QUARTERS_PER_YEAR,
         "stat_changes": stat_changes,
         "save": client_save(save),
     }
@@ -3381,9 +3479,18 @@ async def game_heirs(user: dict[str, Any] = Depends(current_user)) -> dict[str, 
     character = save["character"]
     heirs = []
     for child in character.get("children") or []:
-        age_now = max(0, int(character["age_years"]) - int(child.get("born_parent_age") or 0))
-        heirs.append({"id": child["id"], "name": child["name"], "age_now": age_now, "kind": "child"})
-    heirs.append({"id": "new", "name": "A distant relative", "age_now": 0, "kind": "new"})
+        age_now = max(0, quarters_of(character) - int(child.get("born_parent_age") or 0))
+        heirs.append(
+            {
+                "id": child["id"],
+                "name": child["name"],
+                "age_now": age_now // QUARTERS_PER_YEAR,
+                "age_months": (age_now % QUARTERS_PER_YEAR) * 3,
+                "age_quarters": age_now,
+                "kind": "child",
+            }
+        )
+    heirs.append({"id": "new", "name": "A distant relative", "age_now": 0, "age_months": 0, "age_quarters": 0, "kind": "new"})
     return {
         "obituary": obituary(save),
         "marks_earned": int(save.get("marks_earned") or 0),

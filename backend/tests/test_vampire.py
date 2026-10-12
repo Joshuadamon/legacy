@@ -18,6 +18,11 @@ async def grant_thirst(user_id: str) -> None:
 async def rewrite_character(user_id: str, **fields) -> None:
     save = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     character = save["character"]
+    if "age_years" in fields and "age_quarters" not in fields:
+        years = int(fields["age_years"])
+        fields["age_quarters"] = years * 4
+        fields["age_months"] = 0
+        fields["age_unit"] = "quarters"
     character.update(fields)
     await server.db.saves.update_one(
         {"user_id": user_id, "deleted_at": None},
@@ -117,14 +122,22 @@ async def test_supernatural_actions_are_once_a_year(client):
     assert spent.status_code == 409
     assert "year" in spent.json()["detail"]
 
+    for _ in range(3):
+        stepped = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
+        assert stepped.status_code == 200, stepped.text
+        assert stepped.json()["save"]["character"]["age_years"] == 0
+        still = await client.post("/api/game/supernatural", headers=headers, json={"action": "lay_low"})
+        assert still.status_code == 409
+
     aged = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
     assert aged.status_code == 200, aged.text
     assert aged.json()["save"]["character"]["age_years"] == 1
+    assert aged.json()["save"]["character"]["age_quarters"] == 4
 
     low = await client.post("/api/game/supernatural", headers=headers, json={"action": "lay_low"})
     assert low.status_code == 200, low.text
     laid = low.json()["save"]["character"]
-    assert laid["species_data"]["last_power_age"] == 1
+    assert laid["species_data"]["last_power_age"] == 4
     assert laid["hunter_heat"] < aged.json()["save"]["character"]["hunter_heat"]
 
     clan = await client.post("/api/game/supernatural", headers=headers, json={"action": "seek_clan"})
@@ -158,9 +171,13 @@ async def test_hunter_heat_can_end_the_life(client):
         {"$set": {"character": character}},
     )
 
-    ended = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
-    assert ended.status_code == 200, ended.text
-    body = ended.json()["save"]
+    body = None
+    for _ in range(4):
+        ended = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
+        assert ended.status_code == 200, ended.text
+        body = ended.json()["save"]
+        if not body["alive"]:
+            break
     assert body["alive"] is False
     assert body["true_death"] is True
     assert "Hunters" in body["cause_of_death"]

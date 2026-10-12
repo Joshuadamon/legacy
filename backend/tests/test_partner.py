@@ -6,7 +6,8 @@ from server import (
     BOND_START,
     _migrate_character,
     _sanitize_event,
-    advance_life,
+    advance_quarter,
+    set_age,
     apply_choice,
     epitaph,
     fallback_event,
@@ -16,7 +17,7 @@ from server import (
 
 def test_choice_sets_a_partner_and_marriage_requires_dating():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 28
+    set_age(character, 28 * 4)
     apply_choice(
         character,
         {"effects": {}, "flags": {}, "partner_set": {"name": "June", "status": "married"}},
@@ -40,7 +41,7 @@ def test_choice_sets_a_partner_and_marriage_requires_dating():
 
 def test_partner_end_clears_the_record():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 30
+    set_age(character, 30 * 4)
     apply_choice(
         character,
         {"effects": {}, "flags": {}, "partner_set": {"name": "June", "status": "dating"}},
@@ -52,13 +53,13 @@ def test_partner_end_clears_the_record():
 
 def test_neglect_lowers_bond_and_a_low_bond_offers_a_breakup():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 30
+    set_age(character, 30 * 4)
     character["partner"] = {"name": "June", "status": "dating", "bond": 50}
-    character["partner_seen_age"] = 30
-    advance_life(character, [])
-    advance_life(character, [])
+    character["partner_seen_age"] = 30 * 4
+    for _ in range(11):
+        advance_quarter(character, [])
     assert character["partner"]["bond"] == 50
-    advance_life(character, [])
+    advance_quarter(character, [])
     assert character["partner"]["bond"] == 50 - BOND_NEGLECT_DROP
     character["partner"]["bond"] = BOND_BREAK_AT
     event = fallback_event(character, [], 1)
@@ -68,7 +69,7 @@ def test_neglect_lowers_bond_and_a_low_bond_offers_a_breakup():
 
 def test_child_born_names_the_partner():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 30
+    set_age(character, 30 * 4)
     character["partner"] = {"name": "June", "status": "married", "bond": 70}
     apply_choice(
         character,
@@ -96,7 +97,7 @@ def test_migrate_partner_defaults_to_null_and_clamps_bond():
 
 def test_sanitize_keeps_partner_fields():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 24
+    set_age(character, 24 * 4)
     event = _sanitize_event(
         {
             "title": "A year",
@@ -120,7 +121,7 @@ def test_sanitize_keeps_partner_fields():
 
 def test_epitaph_records_name_and_status():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 80
+    set_age(character, 80 * 4)
     character["partner"] = {"name": "June", "status": "married", "bond": 40}
     save = {
         "generation": 1,
@@ -272,6 +273,9 @@ async def _replace_event(user_id: str, event: dict, age: int | None = None) -> N
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     update = {"current_event": event}
     if age is not None:
+        stored["character"].pop("age_quarters", None)
+        stored["character"].pop("age_months", None)
+        stored["character"].pop("age_unit", None)
         stored["character"]["age_years"] = age
         stored["character"]["stage"] = "adult"
         update["character"] = stored["character"]

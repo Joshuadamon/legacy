@@ -56,6 +56,9 @@ async def test_skip_pays_wages_and_compounds_a_shop_without_a_work_event(client)
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     character = stored["character"]
     character["age_years"] = 30
+    character.pop("age_quarters", None)
+    character.pop("age_months", None)
+    character.pop("age_unit", None)
     character["career"] = {"title": "Clerk", "field": "service", "level": 1, "income": 240}
     character["business"] = {"name": "Salt Line", "type": "bakery", "value": 500}
     character["work_chapter"] = "settled"
@@ -90,6 +93,9 @@ async def test_skip_stops_when_health_fails_mid_montage(client):
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     character = stored["character"]
     character["age_years"] = 90
+    character.pop("age_quarters", None)
+    character.pop("age_months", None)
+    character.pop("age_unit", None)
     character["stats"]["health"] = 2
     await server.db.saves.update_one(
         {"user_id": user_id, "deleted_at": None},
@@ -101,15 +107,16 @@ async def test_skip_stops_when_health_fails_mid_montage(client):
     body = skipped.json()
     assert body["years_skipped"] == 1
     assert body["save"]["alive"] is False
+    quarters = body["save"]["character"]["age_quarters"]
+    assert 360 < quarters < 400
     assert body["new_age"] == body["save"]["character"]["age_years"]
-    assert body["new_age"] == 91
-    assert body["save"]["character"]["age_years"] == 91
+    assert body["new_age"] == 90
     assert body["save"]["current_event"] is None
     assert body["save"]["cause_of_death"]
     assert int(body["save"]["marks_earned"]) > 0
     assert "_id" not in body["save"]
     text = body["montage"]["text"] if isinstance(body["montage"], dict) else body["montage"]
-    assert "91" in text
+    assert "90" in text
 
 
 async def test_skip_stops_on_hunter_death(client):
@@ -123,6 +130,9 @@ async def test_skip_stops_on_hunter_death(client):
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     character = stored["character"]
     character["age_years"] = 30
+    character.pop("age_quarters", None)
+    character.pop("age_months", None)
+    character.pop("age_unit", None)
     character["stats"]["health"] = 80
     character["species"] = "vampire"
     character["species_data"] = {
@@ -207,6 +217,9 @@ async def test_skip_rejected_on_a_fatal_year_and_at_end_of_life(client):
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     character = stored["character"]
     character["age_years"] = 100
+    character.pop("age_quarters", None)
+    character.pop("age_months", None)
+    character.pop("age_unit", None)
     character["stats"]["health"] = 40
     await server.db.saves.update_one(
         {"user_id": user_id, "deleted_at": None},
@@ -244,6 +257,9 @@ async def _replace_event(user_id: str, event: dict, age: int | None = None) -> N
     update = {"current_event": event}
     if age is not None:
         stored["character"]["age_years"] = age
+        stored["character"].pop("age_quarters", None)
+        stored["character"].pop("age_months", None)
+        stored["character"].pop("age_unit", None)
         stored["character"]["stage"] = "adult"
         update["character"] = stored["character"]
     await server.db.saves.update_one({"user_id": user_id, "deleted_at": None}, {"$set": update})

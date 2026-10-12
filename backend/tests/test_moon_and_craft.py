@@ -20,6 +20,11 @@ async def grant(user_id: str, pack_id: str) -> None:
 async def rewrite_character(user_id: str, **fields) -> dict:
     save = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     character = save["character"]
+    if "age_years" in fields and "age_quarters" not in fields:
+        years = int(fields["age_years"])
+        fields["age_quarters"] = years * 4
+        fields["age_months"] = 0
+        fields["age_unit"] = "quarters"
     character.update(fields)
     await server.db.saves.update_one(
         {"user_id": user_id, "deleted_at": None},
@@ -187,6 +192,11 @@ async def test_lycan_powers_are_once_a_year(client):
     spent = await client.post("/api/game/supernatural", headers=headers, json={"action": "hunt"})
     assert spent.status_code == 409
 
+    for _ in range(3):
+        stepped = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
+        assert stepped.status_code == 200, stepped.text
+        still = await client.post("/api/game/supernatural", headers=headers, json={"action": "hunt"})
+        assert still.status_code == 409
     aged = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
     assert aged.status_code == 200, aged.text
     hunted = await client.post("/api/game/supernatural", headers=headers, json={"action": "hunt"})
@@ -232,6 +242,11 @@ async def test_witch_ritual_spends_mana_once_a_year(client):
     assert body["species_data"]["mana"] == 20
     assert body["species_data"]["notoriety"] == 26
     assert body["hunter_heat"] == 8
+    for _ in range(3):
+        stepped = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
+        assert stepped.status_code == 200, stepped.text
+        still = await client.post("/api/game/supernatural", headers=headers, json={"action": "hex_rival"})
+        assert still.status_code == 409
     aged = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
     assert aged.status_code == 200, aged.text
     hexed = await client.post("/api/game/supernatural", headers=headers, json={"action": "hex_rival"})
@@ -251,7 +266,7 @@ async def test_uncontrolled_shift_raises_hunter_heat(client):
     before = created.json()["save"]["character"]
     data = before["species_data"]
     data["control"] = 20
-    await rewrite_character(user_id, age_years=4, species_data=data, hunter_heat=0)
+    await rewrite_character(user_id, age_quarters=19, species_data=data, hunter_heat=0)
 
     ended = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
     assert ended.status_code == 200, ended.text
@@ -276,14 +291,14 @@ async def test_high_notoriety_year_raises_hunter_heat(client):
     data = created.json()["save"]["character"]["species_data"]
     data["notoriety"] = 80
     data["mana"] = 30
-    await rewrite_character(user_id, species_data=data, hunter_heat=4)
+    await rewrite_character(user_id, age_quarters=3, species_data=data, hunter_heat=4)
 
     year = await client.post("/api/game/choice", headers=headers, json={"choice_index": 0})
     assert year.status_code == 200, year.text
     body = year.json()["save"]
     assert body["alive"] is True
     assert body["character"]["hunter_heat"] == 12
-    assert body["character"]["species_data"]["mana"] == 42
+    assert body["character"]["species_data"]["mana"] == 33
     assert "_id" not in body
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     assert stored["deleted_at"] is None

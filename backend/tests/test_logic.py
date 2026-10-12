@@ -2,7 +2,8 @@ from server import (
     LYCAN_SUBTYPES,
     _migrate_character,
     _sanitize_event,
-    advance_life,
+    advance_quarter,
+    set_age,
     apply_choice,
     apply_owned_grants,
     compute_paths,
@@ -14,7 +15,7 @@ from server import (
 
 def test_marks_formula():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 70
+    set_age(character, 70 * 4)
     character["stats"]["reputation"] = 50
     assert marks_for_life(character, 1) == 50 + 25 + 35 + 10
 
@@ -40,7 +41,7 @@ def test_incompatible_legacy_save():
 
 def test_paths_follow_flags():
     character = fresh_character("Ada", "rural_faith", [])
-    character["age_years"] = 16
+    set_age(character, 16 * 4)
     character["stage"] = "teen"
     paths = compute_paths(character, [])
     assert "devout" in paths
@@ -56,14 +57,14 @@ def test_skill_grant_applies_once():
 
 def test_career_pack_opens_a_path():
     character = fresh_character("Ada", "stable", ["career-medicine"])
-    character["age_years"] = 22
+    set_age(character, 22 * 4)
     paths = compute_paths(character, ["career-medicine"])
     assert "career:medicine" in paths
 
 
 def test_sanitize_clamps_and_drops_garbage():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 30
+    set_age(character, 30 * 4)
     event = _sanitize_event(
         {
             "title": "A year",
@@ -112,7 +113,7 @@ def test_migrate_fills_vampire_meters():
 
 def test_sanitize_keeps_species_effects():
     character = fresh_character("Ada", "stable", [])
-    character["age_years"] = 30
+    set_age(character, 30 * 4)
     event = _sanitize_event(
         {
             "title": "Hunger",
@@ -137,9 +138,14 @@ def test_bloodlust_overflow_raises_hunter_heat():
     character = fresh_character("Ada", "stable", [ "supernatural-vampire"], species="vampire")
     character["species_data"]["bloodlust"] = 100
     character["hunter_heat"] = 90
-    cause = advance_life(character, ["supernatural-vampire"])
+    assert advance_quarter(character, ["supernatural-vampire"]) is None
+    assert character["hunter_heat"] == 93
+    for _ in range(2):
+        assert advance_quarter(character, ["supernatural-vampire"]) is None
+    cause = advance_quarter(character, ["supernatural-vampire"])
     assert character["species_data"]["bloodlust"] == 100
     assert character["hunter_heat"] == 100
+    assert character["age_quarters"] == 4
     assert character["age_years"] == 1
     assert cause is not None
     assert "Hunters" in cause
@@ -158,12 +164,13 @@ def test_species_effects_apply_only_to_vampires():
 
 def test_full_moon_with_low_control_raises_hunter_heat():
     character = fresh_character("Ada", "stable", [], species="lycanthrope", subtype="wolf")
-    character["age_years"] = 4
+    set_age(character, 19)
     character["species_data"]["control"] = 20
     character["hunter_heat"] = 0
     reputation = character["stats"]["reputation"]
     health = character["stats"]["health"]
-    cause = advance_life(character, [])
+    cause = advance_quarter(character, [])
+    assert character["age_quarters"] == 20
     assert character["age_years"] == 5
     assert character["species_data"]["moon"] == 100
     assert character["hunter_heat"] == 16
@@ -178,10 +185,13 @@ def test_high_notoriety_year_raises_hunter_heat():
     character["species_data"]["notoriety"] = 80
     character["species_data"]["mana"] = 30
     character["hunter_heat"] = 4
-    cause = advance_life(character, [])
+    assert advance_quarter(character, []) is None
+    assert character["hunter_heat"] == 4
+    assert character["species_data"]["mana"] == 33
+    for _ in range(3):
+        assert advance_quarter(character, []) is None
     assert character["hunter_heat"] == 12
     assert character["species_data"]["mana"] == 42
-    assert cause is None
 
 
 def test_moon_and_notoriety_effects_stay_on_their_species():
@@ -213,3 +223,37 @@ def test_migrate_fills_lycan_and_witch_meters():
 def test_sanitize_rejects_a_thin_event():
     character = fresh_character("Ada", "stable", [])
     assert _sanitize_event({"title": "Only", "narrative": "One.", "choices": [{"label": "A", "outcome": "B"}]}, character) is None
+
+
+def test_four_quarters_are_one_year():
+    character = fresh_character("Ada", "stable", [])
+    for _ in range(4):
+        assert advance_quarter(character, []) is None
+    assert character["age_quarters"] == 4
+    assert character["age_years"] == 1
+    assert character["age_months"] == 0
+
+
+def test_adult_paths_wait_until_seventy_two_quarters():
+    character = fresh_character("Ada", "stable", ["career-medicine"])
+    character["flags"]["honesty"] = 20
+    character["flags"]["ambition"] = 70
+    character["flags"]["nature"] = 70
+    character["flags"]["aggression"] = 70
+    set_age(character, 71)
+    closed = compute_paths(character, ["career-medicine"])
+    assert "gray_market" not in closed
+    assert "career:medicine" not in closed
+    set_age(character, 72)
+    opened = compute_paths(character, ["career-medicine"])
+    assert "gray_market" in opened
+    assert "career:medicine" in opened
+
+
+def test_old_age_death_stays_in_a_human_span():
+    elder = fresh_character("Bea", "stable", [])
+    set_age(elder, 70 * 4)
+    elder["stats"]["health"] = 70
+    while elder["stats"]["health"] > 0 and elder["age_quarters"] < 120 * 4:
+        advance_quarter(elder, [])
+    assert 100 <= elder["age_years"] < 110

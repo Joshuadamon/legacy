@@ -1,63 +1,142 @@
 import { useRouter } from "expo-router";
 import { ScrollView, Text, View } from "react-native";
 
-import { GhostButton, Screen, StatLine } from "../src/components/game-ui";
+import { GhostButton, Screen } from "../src/components/game-ui";
 import { fonts, makeStyles } from "../src/theme";
-import { useGameState, type LineageEntry } from "../src/use-game";
+import { useGameState, type Character, type LineageEntry } from "../src/use-game";
 
-const SPECIES_LABEL: Record<string, string> = {
-  human: "Human",
+const SPECIES_LABELS: Record<string, string> = {
   vampire: "Vampire",
   lycanthrope: "Lycanthrope",
   witch: "Witch",
 };
 
-function speciesLabel(species: string | undefined): string {
-  if (!species) return "Human";
-  return SPECIES_LABEL[species] ?? species;
+function speciesLabel(species: string | undefined): string | null {
+  if (!species || species === "human") return null;
+  return SPECIES_LABELS[species] ?? species;
 }
 
-function partnerText(partner: NonNullable<LineageEntry["partner"]>): string {
+function partnerText(partner: NonNullable<LineageEntry["partner"]> | NonNullable<Character["partner"]>): string {
   if (typeof partner === "string") return partner;
-  if (partner.status === "married") return `${partner.name} · Married`;
-  if (partner.status === "dating") return `${partner.name} · Dating`;
-  return partner.name;
+  const status = partner.status === "married" ? "Married" : "Dating";
+  return `${partner.name} · ${status}`;
+}
+
+function lifespanText(entry: LineageEntry): string {
+  const years = entry.years?.trim();
+  if (years) return years;
+  return `0–${entry.age_at_death}`;
 }
 
 const useStyles = makeStyles((palette) => ({
-  scroll: { paddingHorizontal: 24, paddingBottom: 32 },
+  scroll: { flexGrow: 1 },
+  content: { paddingHorizontal: 20, paddingBottom: 32 },
   kicker: {
     color: palette.accent,
     fontFamily: fonts.uiMedium,
     letterSpacing: 1.4,
-    fontSize: 12,
+    fontSize: 13,
     marginTop: 18,
   },
-  title: { color: palette.text, fontFamily: fonts.display, fontSize: 34, marginTop: 8, marginBottom: 6 },
-  order: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, marginBottom: 16 },
-  tree: { marginTop: 4 },
-  card: {
+  title: { color: palette.text, fontFamily: fonts.display, fontSize: 34, marginTop: 6, marginBottom: 16 },
+  empty: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 16, lineHeight: 22, marginBottom: 12 },
+  node: {
     borderColor: palette.line,
     borderWidth: 1,
     backgroundColor: palette.surface,
     borderRadius: 12,
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
-  livingCard: { borderColor: palette.accent },
-  stem: { alignItems: "center", paddingVertical: 2 },
-  stemLine: { width: 2, height: 14, backgroundColor: palette.accent },
-  stemLabel: {
+  livingNode: { borderColor: palette.accent },
+  gen: {
+    color: palette.accent,
+    fontFamily: fonts.uiMedium,
+    fontSize: 13,
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  name: { color: palette.text, fontFamily: fonts.display, fontSize: 22, lineHeight: 28 },
+  line: { color: palette.text, fontFamily: fonts.body, fontSize: 16, lineHeight: 22, marginTop: 4 },
+  muted: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 16, lineHeight: 22, marginTop: 4 },
+  spine: { alignItems: "center", paddingVertical: 2 },
+  spineLine: { width: 2, height: 16, backgroundColor: palette.accent },
+  spineLabel: {
     color: palette.textMuted,
-    fontFamily: fonts.ui,
-    fontSize: 14,
+    fontFamily: fonts.uiMedium,
+    fontSize: 15,
     lineHeight: 20,
-    marginVertical: 4,
     textAlign: "center",
+    paddingVertical: 2,
   },
-  name: { color: palette.text, fontFamily: fonts.display, fontSize: 22 },
-  body: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, lineHeight: 22, marginTop: 6 },
-  living: { color: palette.accent, fontFamily: fonts.uiMedium, fontSize: 12, letterSpacing: 1, marginBottom: 4 },
+  back: { marginTop: 16 },
 }));
+
+function AncestorNode({ entry }: { entry: LineageEntry }) {
+  const styles = useStyles();
+  const species = speciesLabel(entry.species);
+  const cause = entry.cause_of_death?.trim() || "The record does not say.";
+  return (
+    <View style={styles.node} testID={`ancestor-${entry.generation}`}>
+      <Text style={styles.gen}>GENERATION {entry.generation}</Text>
+      <Text style={styles.name}>{entry.name}</Text>
+      <Text style={styles.line} testID={`ancestor-lifespan-${entry.generation}`}>
+        {lifespanText(entry)}
+      </Text>
+      {species ? (
+        <Text style={styles.line} testID={`ancestor-species-${entry.generation}`}>
+          {species}
+        </Text>
+      ) : null}
+      <Text style={styles.muted} testID={`ancestor-cause-${entry.generation}`}>
+        Died: {cause}
+      </Text>
+      <Text style={styles.line} testID={`ancestor-partner-${entry.generation}`}>
+        Partner: {entry.partner ? partnerText(entry.partner) : "No partner"}
+      </Text>
+      <Text style={styles.line} testID={`ancestor-heir-${entry.generation}`}>
+        Continued as {entry.heir_name}
+      </Text>
+    </View>
+  );
+}
+
+function Connector({ generation, heir }: { generation: number; heir: string }) {
+  const styles = useStyles();
+  return (
+    <View style={styles.spine} testID={`lineage-connector-${generation}`}>
+      <View style={styles.spineLine} />
+      <Text style={styles.spineLabel}>The line passed to {heir}</Text>
+      <View style={styles.spineLine} />
+    </View>
+  );
+}
+
+function LivingNode({ character }: { character: Character }) {
+  const styles = useStyles();
+  const species = speciesLabel(character.species);
+  const children = character.children.map((child) => child.name).filter(Boolean);
+  return (
+    <View style={[styles.node, styles.livingNode]} testID="living-card">
+      <Text style={styles.gen}>LIVING</Text>
+      <Text style={styles.name}>{character.name}</Text>
+      <Text style={styles.line} testID="living-age">
+        Age {character.age_years}
+      </Text>
+      {species ? (
+        <Text style={styles.line} testID="living-species">
+          {species}
+        </Text>
+      ) : null}
+      <Text style={styles.line} testID="living-partner">
+        Partner: {character.partner ? partnerText(character.partner) : "No partner"}
+      </Text>
+      <Text style={styles.muted} testID="living-children">
+        Children: {children.length ? children.join(", ") : "None yet"}
+      </Text>
+    </View>
+  );
+}
 
 export default function LineageScreen() {
   const styles = useStyles();
@@ -68,48 +147,20 @@ export default function LineageScreen() {
 
   return (
     <Screen testID="lineage-screen">
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <Text style={styles.kicker}>FAMILY</Text>
         <Text style={styles.title}>The line</Text>
-        <Text style={styles.order}>Oldest at the top. The living life at the bottom.</Text>
-        {line.length === 0 ? <Text style={styles.body}>You are the first of the line.</Text> : null}
-        <View style={styles.tree} testID="lineage-tree">
-          {line.map((entry) => (
-            <View key={`${entry.generation}-${entry.name}`}>
-              <View style={styles.card} testID={`ancestor-${entry.generation}`}>
-                <Text style={styles.name}>
-                  Gen {entry.generation} · {entry.name}
-                </Text>
-                <StatLine label="Species" value={speciesLabel(entry.species)} />
-                <StatLine label="Died at" value={entry.age_at_death} />
-                <StatLine label="Cause" value={entry.cause_of_death || "The record does not say."} />
-                <StatLine label="Partner" value={entry.partner ? partnerText(entry.partner) : "None"} />
-                <StatLine label="Continued as" value={entry.heir_name} />
-              </View>
-              <View style={styles.stem} testID={`lineage-stem-${entry.generation}`}>
-                <View style={styles.stemLine} />
-                <Text style={styles.stemLabel}>The line passed to {entry.heir_name}</Text>
-                <View style={styles.stemLine} />
-              </View>
-            </View>
-          ))}
-          {save ? (
-            <View style={[styles.card, styles.livingCard]} testID="living-card">
-              <Text style={styles.living}>LIVING</Text>
-              <Text style={styles.name}>
-                Gen {save.generation} · {save.character.name}
-              </Text>
-              <StatLine label="Species" value={speciesLabel(save.character.species)} />
-              <StatLine label="Age" value={save.character.age_years} />
-              <StatLine
-                label="Partner"
-                value={save.character.partner ? partnerText(save.character.partner) : "None"}
-              />
-            </View>
-          ) : null}
+        {line.length === 0 ? <Text style={styles.empty}>You are the first of the line.</Text> : null}
+        {line.map((entry) => (
+          <View key={`${entry.generation}-${entry.name}`}>
+            <AncestorNode entry={entry} />
+            <Connector generation={entry.generation} heir={entry.heir_name} />
+          </View>
+        ))}
+        {save ? <LivingNode character={save.character} /> : null}
+        <View style={styles.back}>
+          <GhostButton testID="lineage-back-button" label="Back to the year" onPress={() => router.back()} />
         </View>
-        <View style={{ height: 16 }} />
-        <GhostButton testID="lineage-back-button" label="Back to the year" onPress={() => router.back()} />
       </ScrollView>
     </Screen>
   );

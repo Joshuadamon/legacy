@@ -91,7 +91,9 @@ export type Character = {
   name: string;
   background: string;
   background_key: string;
+  age_quarters: number;
   age_years: number;
+  age_months: number;
   stage: string;
   stats: Stats;
   flags: Flags;
@@ -112,9 +114,9 @@ export type HistoryYear = { age: number; title: string; choice: string; outcome:
 export type LineageEntry = {
   generation: number;
   name: string;
-  species: string;
-  age_at_death: number;
   years: string;
+  species?: string;
+  age_at_death?: number;
   cause_of_death: string | null;
   partner: { name: string; status: "dating" | "married" } | string | null;
   heir_id: string;
@@ -153,7 +155,30 @@ export type StorePack = {
   owned: boolean;
 };
 
-export type HeirOption = { id: string; name: string; age_now: number; kind: "child" | "new" };
+export type HeirOption = {
+  id: string;
+  name: string;
+  age_now: number;
+  age_months?: number;
+  age_quarters?: number;
+  kind: "child" | "new";
+};
+
+export function formatAge(years: number, months = 0): string {
+  if (!months) return `${years}y`;
+  return `${years}y ${months}m`;
+}
+
+export function formatQuarters(quarters: number): string {
+  const years = Math.floor(quarters / 4);
+  const months = (quarters % 4) * 3;
+  return formatAge(years, months);
+}
+
+export function powerSpentThisYear(lastPowerAge: number | null | undefined, ageQuarters: number): boolean {
+  if (lastPowerAge == null) return false;
+  return Math.floor(lastPowerAge / 4) === Math.floor(ageQuarters / 4);
+}
 
 export function useGameState() {
   const { status } = useAuth();
