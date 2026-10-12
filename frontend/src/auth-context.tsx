@@ -13,6 +13,9 @@ type AuthValue = {
   status: "loading" | "user" | "null";
   user: User | null;
   signIn: (name: string) => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<void>;
+  loginEmail: (email: string, password: string) => Promise<void>;
+  linkEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   confirmAge: () => Promise<void>;
 };
@@ -69,6 +72,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await setToken(result.session_token);
         setUser(result.user);
         setStatus("user");
+      },
+      register: async (name: string, email: string, password: string) => {
+        const result = await api<{ session_token: string; user: User }>("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify({ name, email, password, age_confirmed: true }),
+        });
+        await setToken(result.session_token);
+        setUser(result.user);
+        setStatus("user");
+      },
+      loginEmail: async (email: string, password: string) => {
+        const result = await api<{ session_token: string; user: User }>("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
+        await setToken(result.session_token);
+        setUser(result.user);
+        setStatus("user");
+      },
+      linkEmail: async (email: string, password: string) => {
+        const result = await api<{ user: User }>("/api/auth/link-email", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        });
+        setUser(result.user);
       },
       confirmAge: async () => {
         const result = await api<{ user: User }>("/api/account/age", {

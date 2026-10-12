@@ -189,7 +189,78 @@ def public_doc(doc: dict | None) -> dict | None:
         return None
     copied = dict(doc)
     copied.pop("_id", None)
+    copied.pop("password_hash", None)
     return copied
+
+
+def model_provider() -> str:
+    return (os.environ.get("MODEL_PROVIDER") or "anthropic").strip().lower() or "anthropic"
+
+
+def model_name() -> str:
+    named = (os.environ.get("MODEL_NAME") or "").strip()
+    if named:
+        return named
+    return (os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-5").strip() or "claude-sonnet-5"
+
+
+def season_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("LEGACY_SEASON_LIMIT", "60")))
+    except (TypeError, ValueError):
+        return 60
+
+
+_season_hits: dict[str, list[datetime]] = {}
+
+
+def consume_season(user_id: str) -> None:
+    """One season or skip per call, counted per user. Reads do not count."""
+    limit = season_limit()
+    stamp = now()
+    cutoff = stamp - timedelta(hours=1)
+    hits = [item for item in _season_hits.get(user_id, []) if item > cutoff]
+    if len(hits) >= limit:
+        _season_hits[user_id] = hits
+        raise HTTPException(
+            status_code=429,
+            detail="Season generation is limited. Wait and try the season again.",
+        )
+    hits.append(stamp)
+    _season_hits[user_id] = hits
+
+
+async def complete_model(system: str, user_text: str, max_tokens: int) -> str | None:
+    """One generation path. The provider and model name come from the environment."""
+    provider = model_provider()
+    if provider != "anthropic":
+        logger.warning("model provider %s is not configured; using the written deck", provider)
+        return None
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or ""
+    if not api_key:
+        return None
+    try:
+        from anthropic import AsyncAnthropic
+    except ImportError:
+        logger.warning("anthropic SDK is not installed; using the written deck")
+        return None
+    client = AsyncAnthropic(api_key=api_key)
+    try:
+        message = await client.messages.create(
+            model=model_name(),
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user_text}],
+        )
+    except Exception:
+        logger.exception("model generation failed")
+        return None
+    parts: list[str] = []
+    for block in message.content:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return "".join(parts) or None
 
 
 # --- catalog -----------------------------------------------------------------
@@ -2776,31 +2847,10 @@ def parse_json_object(text: str) -> dict[str, Any] | None:
 
 
 async def llm_event(character: dict[str, Any], history: list[dict[str, Any]], owned_packs: list[str], generation: int) -> dict[str, Any] | None:
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or ""
-    if not api_key:
+    text = await complete_model(SYSTEM_PROMPT, build_context(character, history, owned_packs, generation), 1200)
+    if not text:
         return None
-    try:
-        from anthropic import AsyncAnthropic
-    except ImportError:
-        logger.warning("anthropic SDK is not installed; using the written year deck")
-        return None
-    client = AsyncAnthropic(api_key=api_key)
-    try:
-        message = await client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=1200,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_context(character, history, owned_packs, generation)}],
-        )
-    except Exception:
-        logger.exception("year generation failed")
-        return None
-    parts: list[str] = []
-    for block in message.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return _sanitize_event(parse_json_object("".join(parts)), character)
+    return _sanitize_event(parse_json_object(text), character)
 
 
 async def generate_event(
@@ -2931,13 +2981,7 @@ Rules:
 
 
 async def llm_montage(character: dict[str, Any], years: list[dict[str, Any]]) -> dict[str, Any] | None:
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or ""
-    if not api_key or not years:
-        return None
-    try:
-        from anthropic import AsyncAnthropic
-    except ImportError:
-        logger.warning("anthropic SDK is not installed; using the written montage")
+    if not years:
         return None
     payload = {
         "name": character.get("name"),
@@ -2947,23 +2991,10 @@ async def llm_montage(character: dict[str, Any], years: list[dict[str, Any]]) ->
         "business": character.get("business"),
         "years": years,
     }
-    client = AsyncAnthropic(api_key=api_key)
-    try:
-        message = await client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=700,
-            system=MONTAGE_PROMPT,
-            messages=[{"role": "user", "content": json.dumps(payload, default=str)}],
-        )
-    except Exception:
-        logger.exception("montage generation failed")
+    text = await complete_model(MONTAGE_PROMPT, json.dumps(payload, default=str), 700)
+    if not text:
         return None
-    parts: list[str] = []
-    for block in message.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return _clean_montage(parse_json_object("".join(parts)), years)
+    return _clean_montage(parse_json_object(text), years)
 
 
 async def compose_montage(character: dict[str, Any], years: list[dict[str, Any]], immortal: bool = False) -> dict[str, Any]:
@@ -3266,6 +3297,23 @@ class AgeIn(BaseModel):
     confirmed: bool
 
 
+class RegisterIn(BaseModel):
+    email: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=8, max_length=200)
+    name: str = Field(min_length=1, max_length=40)
+    age_confirmed: bool = True
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class LinkEmailIn(BaseModel):
+    email: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=8, max_length=200)
+
+
 class NewGameIn(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     background_key: str
@@ -3410,6 +3458,97 @@ async def auth_session(body: SessionIn) -> dict[str, Any]:
     await store.exchanges.insert_one({"session_id": body.session_id, "user_id": user["user_id"], "created_at": now()})
     await ensure_profile(user["user_id"])
     return {"session_token": token, "user": public_doc(user)}
+
+
+def normalize_email(value: str) -> str:
+    text = " ".join(str(value or "").split()).lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text):
+        raise HTTPException(status_code=400, detail="That email does not look usable.")
+    return text
+
+
+def hash_password(password: str) -> str:
+    import bcrypt
+
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def password_matches(password: str, hashed: str) -> bool:
+    import bcrypt
+
+    try:
+        return bool(bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8")))
+    except (ValueError, TypeError):
+        return False
+
+
+async def issue_token(user_id: str) -> str:
+    store = require_db()
+    token = secrets.token_urlsafe(32)
+    await store.sessions.insert_one(
+        {
+            "session_token": token,
+            "user_id": user_id,
+            "expires_at": now() + timedelta(days=7),
+            "deleted_at": None,
+            "created_at": now(),
+        }
+    )
+    return token
+
+
+@api.post("/auth/register")
+async def auth_register(body: RegisterIn) -> dict[str, Any]:
+    email = normalize_email(body.email)
+    store = require_db()
+    existing = await store.users.find_one({"email": email, "deleted_at": None})
+    if existing:
+        raise HTTPException(status_code=409, detail="That email is already on a record.")
+    user = {
+        "user_id": str(uuid.uuid4()),
+        "name": clean_name(body.name, "Player"),
+        "email": email,
+        "password_hash": hash_password(body.password),
+        "age_confirmed": bool(body.age_confirmed),
+        "deleted_at": None,
+        "created_at": now(),
+    }
+    await store.users.insert_one(user)
+    await ensure_profile(user["user_id"])
+    token = await issue_token(user["user_id"])
+    return {"session_token": token, "user": public_doc(user)}
+
+
+@api.post("/auth/login")
+async def auth_login(body: LoginIn) -> dict[str, Any]:
+    email = normalize_email(body.email)
+    store = require_db()
+    found = await store.users.find_one({"email": email, "deleted_at": None})
+    hashed = str((found or {}).get("password_hash") or "")
+    if not found or not password_matches(body.password, hashed):
+        raise HTTPException(status_code=401, detail="The email or password did not match.")
+    token = await issue_token(str(found["user_id"]))
+    return {"session_token": token, "user": public_doc(found)}
+
+
+@api.post("/auth/link-email")
+async def auth_link_email(body: LinkEmailIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    email = normalize_email(body.email)
+    if str(user.get("email") or "").strip():
+        raise HTTPException(status_code=409, detail="This account already has an email.")
+    store = require_db()
+    taken = await store.users.find_one({"email": email, "deleted_at": None})
+    if taken:
+        raise HTTPException(status_code=409, detail="That email is already on a record.")
+    stored = await store.users.find_one({"user_id": user["user_id"], "deleted_at": None})
+    if not stored:
+        raise HTTPException(status_code=401, detail="Unknown user")
+    stored["email"] = email
+    stored["password_hash"] = hash_password(body.password)
+    payload = {key: value for key, value in stored.items() if key != "_id"}
+    await store.users.update_one({"user_id": user["user_id"], "deleted_at": None}, {"$set": payload})
+    refreshed = await store.users.find_one({"user_id": user["user_id"], "deleted_at": None})
+    return {"user": public_doc(refreshed)}
 
 
 @api.get("/auth/me")
@@ -3647,6 +3786,7 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
     choices = event_now.get("choices") or []
     if body.choice_index < 0 or body.choice_index >= len(choices):
         raise HTTPException(status_code=400, detail="That choice is not on the page")
+    consume_season(user["user_id"])
     picked = choices[body.choice_index]
     character = save["character"]
     blocked = career_block(character, picked, owned)
@@ -3714,6 +3854,7 @@ async def game_skip(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
         raise HTTPException(status_code=409, detail="This life is already at its end.")
     if event_blocks_skip(save.get("current_event")):
         raise HTTPException(status_code=409, detail="This season cannot be skipped.")
+    consume_season(user["user_id"])
     before = {key: int(character["stats"][key]) for key in STAT_KEYS}
     years: list[dict[str, Any]] = []
     cause: str | None = None
@@ -4041,4 +4182,4 @@ app.include_router(api)
 
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8001")), reload=False)

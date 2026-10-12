@@ -247,6 +247,7 @@ export default function GameScreen() {
   const skipRef = useRef<BottomSheetModal>(null);
   const snaps = useMemo(() => ["78%"], []);
   const [toast, setToast] = useState<string | null>(null);
+  const [seasonFailed, setSeasonFailed] = useState<string | null>(null);
   const [montage, setMontage] = useState<SkipResult | null>(null);
   const [partnerOpen, setPartnerOpen] = useState(false);
   const [torchOpen, setTorchOpen] = useState(false);
@@ -293,6 +294,7 @@ export default function GameScreen() {
 
   async function skipYears() {
     setToast(null);
+    setSeasonFailed(null);
     try {
       const result = await skip.mutateAsync();
       if (!result.save.alive) {
@@ -302,18 +304,23 @@ export default function GameScreen() {
       setMontage(result);
     } catch (error) {
       void hapticError();
-      setToast(error instanceof ApiError ? error.message : "The years did not pass.");
+      const message = error instanceof ApiError ? error.message : "The years did not pass.";
+      if (error instanceof ApiError && error.status === 429) setSeasonFailed(message);
+      setToast(message);
     }
   }
 
   async function pick(index: number) {
     setToast(null);
+    setSeasonFailed(null);
     try {
       const result = await choice.mutateAsync(index);
       if (!result.save.alive) router.replace("/heir");
     } catch (error) {
       void hapticError();
-      setToast(error instanceof ApiError ? error.message : "The season did not resolve.");
+      const message = error instanceof ApiError ? error.message : "The season did not resolve.";
+      if (error instanceof ApiError && error.status === 429) setSeasonFailed(message);
+      setToast(message);
     }
   }
 
@@ -395,6 +402,11 @@ export default function GameScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <Header save={save} />
         <Toast message={toast} />
+        {seasonFailed ? (
+          <Text testID="season-failed" style={styles.outcome}>
+            {seasonFailed}
+          </Text>
+        ) : null}
         <View style={styles.meters}>
           <Meter label="Health" value={save.character.stats.health} />
           <Meter label="Happiness" value={save.character.stats.happiness} />
