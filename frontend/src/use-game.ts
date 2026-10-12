@@ -43,6 +43,11 @@ export type Choice = {
   child_name?: string;
   partner_set?: { name: string; status: "dating" | "married" };
   partner_end?: boolean;
+  career_start?: { title: string; field: string };
+  career_level?: "up" | "down";
+  career_leave?: boolean;
+  business_start?: { name: string; type: string };
+  business_event?: number;
   species_effects?: {
     bloodlust?: number;
     masquerade?: number;

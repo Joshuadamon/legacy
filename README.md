@@ -41,7 +41,8 @@ From `frontend`, `npm run lint` is `tsc --noEmit`.
 - Legacy Marks: 250 to start, a grant on death, a store of career, skill, cosmetic, lifestyle, and supernatural packs
 - Owned skill packs change the living character once per life. Career packs open fields in the year prompt. The Thirst, the Moon, and the Craft are playable: a birth, or a turn after thirteen. Hunger, a full moon with low control, and flashy magic can draw hunters
 - A partner can be met, kept, married, or lost. The person at your side is the other parent, and their name and status stay on the death record
+- A job can be taken, climbed, and lost. A shop can be opened, and the heir keeps it
 
 ## Next
 
-Careers and inherited businesses, the family tree, and skipping a few childhood years.
+The family tree, and skipping a few childhood years.

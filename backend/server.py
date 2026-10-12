@@ -50,6 +50,12 @@ BOND_NEGLECT_AFTER = 3
 BOND_NEGLECT_DROP = 5
 BOND_BREAK_AT = 20
 PARTNER_STATUSES = ("dating", "married")
+CAREER_MIN_AGE = 18
+CAREER_LEVEL_MAX = 10
+FREE_FIELDS = ("labor", "service", "trade")
+FIELD_BASE = {"labor": 280, "service": 240, "trade": 320, "medicine": 640, "law": 700, "journalism": 420}
+BUSINESS_START_VALUE = 500
+BUSINESS_GROWTH_DIVISOR = 25
 SPECIES_EFFECT_KEYS = ("bloodlust", "masquerade", "hunter_heat", "moon", "control", "mana", "notoriety")
 PACK_TITLES = ("Grey Acre", "The Low Road", "Salt Line", "Hearth Kin", "The Quiet Mile")
 COVEN_TITLES = ("The Closed Kitchen", "Lantern House", "The Third Stair", "Brine and Thread", "The Unlit Room")
@@ -105,6 +111,10 @@ def clamp_delta(value: Any, limit: int) -> int:
     except (TypeError, ValueError):
         return 0
     return max(-limit, min(limit, number))
+
+
+def field_slug(value: Any) -> str:
+    return " ".join(str(value or "").split()).lower()[:40]
 
 
 def clean_name(name: str | None, fallback: str = "Unnamed") -> str:
@@ -408,6 +418,24 @@ def choice(
         partner_name = clean_name(str(incoming.get("name") or ""), "")
         if partner_name:
             row["partner_set"] = {"name": partner_name, "status": incoming["status"]}
+    start = extra.get("career_start")
+    if isinstance(start, dict):
+        title = clean_name(str(start.get("title") or ""), "")
+        field = field_slug(start.get("field"))
+        if title and field:
+            row["career_start"] = {"title": title, "field": field}
+    if extra.get("career_level") in ("up", "down"):
+        row["career_level"] = extra["career_level"]
+    if extra.get("career_leave") is True:
+        row["career_leave"] = True
+    shop = extra.get("business_start")
+    if isinstance(shop, dict):
+        shop_name = clean_name(str(shop.get("name") or ""), "")
+        shop_type = clean_name(str(shop.get("type") or ""), "")
+        if shop_name and shop_type:
+            row["business_start"] = {"name": shop_name, "type": shop_type}
+    if isinstance(extra.get("business_event"), int):
+        row["business_event"] = clamp_delta(extra["business_event"], 50_000)
     block = extra.get("species_effects")
     if isinstance(block, dict):
         row["species_effects"] = {
@@ -1302,6 +1330,117 @@ def partner_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def hire_event() -> dict[str, Any]:
+    return event(
+        "A shift that has a name",
+        "They will pay you to show up. The title is plainer than the speech.",
+        [
+            choice(
+                "Take the job",
+                "You have a boss and a number.",
+                {"happiness": 2},
+                {"discipline": 2},
+                career_start={"title": "Night clerk", "field": "labor"},
+            ),
+            choice("Turn it down", "The want of a wage stays theoretical.", {"happiness": -1}),
+        ],
+    )
+
+
+def promote_event(career: dict[str, Any]) -> dict[str, Any]:
+    title = str(career.get("title") or "the job")
+    return event(
+        "The hour they noticed",
+        f"Your boss says the {title} work has been landing.",
+        [
+            choice(
+                "Take the step up",
+                "The pay stub agrees.",
+                {"reputation": 2},
+                {"ambition": 2},
+                career_level="up",
+            ),
+            choice("Stay where you are", "You keep the hours you already know.", {"happiness": 1}),
+        ],
+    )
+
+
+def fire_event() -> dict[str, Any]:
+    return event(
+        "The meeting with no agenda",
+        "A box is already the right size. Someone says it is not personal.",
+        [
+            choice(
+                "Take the box",
+                "The wage stops. The story does not.",
+                {"happiness": -4},
+                career_leave=True,
+            ),
+            choice(
+                "Ask to stay for less",
+                "They consider it, which is not a yes.",
+                {"happiness": -2},
+                career_level="down",
+            ),
+        ],
+    )
+
+
+def found_event() -> dict[str, Any]:
+    return event(
+        "A name on a door",
+        "A lease, a sign, and a thing that is not a job someone else owns.",
+        [
+            choice(
+                "Open it",
+                "The first month is all hours.",
+                {"money": -200, "happiness": 2},
+                {"ambition": 3},
+                business_start={"name": "Hale's", "type": "shop"},
+            ),
+            choice("Wait", "The sign stays in the window of your head.", {"happiness": -1}),
+        ],
+    )
+
+
+def grow_event(business: dict[str, Any]) -> dict[str, Any]:
+    name = str(business.get("name") or "The shop")
+    return event(
+        "A better week",
+        f"{name} had a line. Not a crowd. A line.",
+        [
+            choice(
+                "Put it back into the shop",
+                "The shelves look less embarrassed.",
+                {"happiness": 2},
+                business_event=600,
+            ),
+            choice("Take the cash home", "The shop stays the size it is.", {"money": 150}),
+        ],
+    )
+
+
+def work_fallback(character: dict[str, Any]) -> dict[str, Any] | None:
+    """The next job or shop beat, on a year the partner system is not using."""
+    age = int(character["age_years"])
+    if age < CAREER_MIN_AGE:
+        return None
+    career = character.get("career") if isinstance(character.get("career"), dict) else None
+    business = character.get("business") if isinstance(character.get("business"), dict) else None
+    chapter = character.get("work_chapter")
+    if career and chapter == "promote":
+        return promote_event(career)
+    if career and chapter == "fire":
+        return fire_event()
+    if not career and chapter == "found":
+        return found_event()
+    if business and chapter == "grow":
+        return grow_event(business)
+    if not career and chapter not in ("promote", "fire", "found", "grow") and (age == 19 or (age > 19 and (age - 19) % 8 == 0)):
+        return hire_event()
+    return None
+
+
 def fallback_event(character: dict, history: list[dict[str, Any]], generation: int) -> dict[str, Any]:
     age = int(character["age_years"])
     if age >= 100:
@@ -1309,6 +1448,9 @@ def fallback_event(character: dict, history: list[dict[str, Any]], generation: i
     due = partner_fallback(character)
     if due:
         return copy.deepcopy(due)
+    work = work_fallback(character)
+    if work:
+        return copy.deepcopy(work)
     stage = character.get("stage") or stage_for(age)
     pool = list(EVENTS.get(stage) or EVENTS["adult"])
     data = character.get("species_data") if isinstance(character.get("species_data"), dict) else {}
@@ -1484,6 +1626,7 @@ def fresh_character(
         "partner_seen_age": None,
         "partner_chapter": None,
         "career": None,
+        "work_chapter": None,
         "business": None,
         "species": born,
         "species_data": payload,
@@ -1538,6 +1681,7 @@ def heir_character(parent: dict[str, Any], child: dict[str, Any] | None, given_n
         "partner_seen_age": None,
         "partner_chapter": None,
         "career": None,
+        "work_chapter": None,
         "business": business,
         "species": "human",
         "species_data": None,
@@ -1591,8 +1735,11 @@ def _migrate_character(character: dict[str, Any]) -> dict[str, Any]:
             character["partner_seen_age"] = int(character["age_years"])
         if character.get("partner_chapter") not in ("court", "marry", "house", "settled"):
             character["partner_chapter"] = "settled"
-    character.setdefault("career", None)
-    character.setdefault("business", None)
+    character["career"] = _clean_career(character.get("career"))
+    character["business"] = _clean_business(character.get("business"))
+    character.setdefault("work_chapter", None)
+    if character.get("work_chapter") not in ("promote", "fire", "found", "grow", "settled"):
+        character["work_chapter"] = "settled" if character["career"] or character["business"] else None
     character.setdefault("species", "human")
     character.setdefault("species_data", None)
     character.setdefault("hunter_heat", 0)
@@ -1721,6 +1868,112 @@ def apply_partner(character: dict[str, Any], picked: dict[str, Any]) -> None:
     character["life_log"].append(f"Age {age}: Met {name}.")
 
 
+def pay_for(field: str, level: int) -> int:
+    base = FIELD_BASE.get(field, 260)
+    return base * max(1, min(CAREER_LEVEL_MAX, int(level)))
+
+
+def field_open(field: str, owned_packs: list[str]) -> bool:
+    slug = field_slug(field)
+    if slug in FREE_FIELDS:
+        return True
+    return slug in set(unlocks_from_packs(owned_packs)["careers"])
+
+
+def career_block(character: dict[str, Any], picked: dict[str, Any], owned_packs: list[str]) -> str | None:
+    incoming = picked.get("career_start")
+    if not isinstance(incoming, dict):
+        return None
+    if int(character["age_years"]) < CAREER_MIN_AGE:
+        return "A career waits until eighteen."
+    if not field_open(str(incoming.get("field") or ""), owned_packs):
+        return "That field is not open to you."
+    return None
+
+
+def _clean_career(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    title = clean_name(str(raw.get("title") or ""), "")
+    field = field_slug(raw.get("field"))
+    if not title or not field:
+        return None
+    try:
+        level = int(raw.get("level", 1))
+    except (TypeError, ValueError):
+        level = 1
+    level = max(1, min(CAREER_LEVEL_MAX, level))
+    try:
+        income = int(raw.get("income", pay_for(field, level)))
+    except (TypeError, ValueError):
+        income = pay_for(field, level)
+    return {"title": title, "field": field, "level": level, "income": max(0, income)}
+
+
+def _clean_business(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    name = clean_name(str(raw.get("name") or ""), "")
+    kind = clean_name(str(raw.get("type") or ""), "")
+    if not name or not kind:
+        return None
+    try:
+        value = int(raw.get("value", 0))
+    except (TypeError, ValueError):
+        value = 0
+    return {"name": name, "type": kind, "value": value}
+
+
+def _business_delta(swing: Any) -> int | None:
+    if isinstance(swing, bool) or swing is None:
+        return None
+    if isinstance(swing, dict):
+        swing = swing.get("delta")
+    if isinstance(swing, bool) or swing is None:
+        return None
+    return clamp_delta(swing, 50_000)
+
+
+def apply_work(character: dict[str, Any], picked: dict[str, Any]) -> None:
+    age = int(character["age_years"])
+    incoming = picked.get("career_start")
+    if isinstance(incoming, dict) and age >= CAREER_MIN_AGE:
+        title = clean_name(str(incoming.get("title") or ""), "")
+        field = field_slug(incoming.get("field"))
+        if title and field:
+            character["career"] = {"title": title, "field": field, "level": 1, "income": pay_for(field, 1)}
+            character["work_chapter"] = "promote"
+            character["life_log"].append(f"Age {age}: Hired as {title}.")
+    step = picked.get("career_level")
+    if step in (1, -1):
+        step = "up" if step == 1 else "down"
+    career = character.get("career") if isinstance(character.get("career"), dict) else None
+    if career and step in ("up", "down"):
+        career["level"] = max(1, min(CAREER_LEVEL_MAX, int(career["level"]) + (1 if step == "up" else -1)))
+        career["income"] = pay_for(str(career["field"]), int(career["level"]))
+        if step == "up" and character.get("work_chapter") == "promote":
+            character["work_chapter"] = "fire"
+    if picked.get("career_leave") is True and isinstance(character.get("career"), dict):
+        title = str(character["career"]["title"])
+        character["career"] = None
+        character["work_chapter"] = "found"
+        character["life_log"].append(f"Age {age}: Left {title}.")
+    shop = picked.get("business_start")
+    if isinstance(shop, dict) and not isinstance(character.get("business"), dict):
+        name = clean_name(str(shop.get("name") or ""), "")
+        kind = clean_name(str(shop.get("type") or ""), "")
+        if name and kind:
+            character["business"] = {"name": name, "type": kind, "value": BUSINESS_START_VALUE}
+            character["work_chapter"] = "grow"
+            character["life_log"].append(f"Age {age}: Opened {name}.")
+    business = character.get("business") if isinstance(character.get("business"), dict) else None
+    delta = _business_delta(picked.get("business_event"))
+    if business and delta is not None:
+        business["value"] = int(business["value"]) + delta
+        if character.get("work_chapter") == "grow":
+            character["work_chapter"] = "settled"
+
+
 def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
     for stat, delta in (picked.get("effects") or {}).items():
         if stat not in STAT_KEYS:
@@ -1735,6 +1988,7 @@ def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
             continue
         character["flags"][flag] = clamp(int(character["flags"][flag]) + clamp_delta(delta, 40))
     apply_partner(character, picked)
+    apply_work(character, picked)
     if picked.get("child_born") and int(character["age_years"]) >= 16:
         existing = character["children"]
         fallback = CHILD_NAMES[len(existing) % len(CHILD_NAMES)]
@@ -1821,6 +2075,17 @@ def tick_partner(character: dict[str, Any]) -> None:
     partner["bond"] = clamp(int(partner.get("bond") or 0) - BOND_NEGLECT_DROP)
 
 
+def tick_livelihood(character: dict[str, Any]) -> None:
+    career = character.get("career") if isinstance(character.get("career"), dict) else None
+    if career:
+        character["stats"]["money"] = clamp_money(int(character["stats"]["money"]) + int(career.get("income") or 0))
+    business = character.get("business") if isinstance(character.get("business"), dict) else None
+    if not business:
+        return
+    value = int(business.get("value") or 0)
+    business["value"] = value + max(1, value // BUSINESS_GROWTH_DIVISOR)
+
+
 def hunter_pressure(character: dict[str, Any]) -> str | None:
     if character.get("species") in SPECIES_PACKS and int(character.get("hunter_heat") or 0) >= HUNTER_DEATH_AT:
         return HUNTER_DEATH_CAUSE
@@ -1872,6 +2137,7 @@ def advance_life(character: dict[str, Any], owned_packs: list[str]) -> str | Non
     elif species == "witch":
         tick_witch(character)
     tick_partner(character)
+    tick_livelihood(character)
     apply_owned_grants(character, owned_packs)
     character["unlocked_paths"] = compute_paths(character, owned_packs)
     return hunter_pressure(character)
@@ -2006,6 +2272,29 @@ def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | Non
                 row["child_name"] = clean_name(item["child_name"])
         if item.get("partner_end") is True:
             row["partner_end"] = True
+        start = item.get("career_start")
+        if isinstance(start, dict) and int(character["age_years"]) >= CAREER_MIN_AGE:
+            title = clean_name(str(start.get("title") or ""), "")
+            field = field_slug(start.get("field"))
+            open_field = field in FREE_FIELDS or f"career:{field}" in set(character.get("unlocked_paths") or [])
+            if title and field and open_field:
+                row["career_start"] = {"title": title, "field": field}
+        level_step = item.get("career_level")
+        if level_step in ("up", "down"):
+            row["career_level"] = level_step
+        elif level_step in (1, -1):
+            row["career_level"] = "up" if level_step == 1 else "down"
+        if item.get("career_leave") is True:
+            row["career_leave"] = True
+        shop = item.get("business_start")
+        if isinstance(shop, dict):
+            shop_name = clean_name(str(shop.get("name") or ""), "")
+            shop_type = clean_name(str(shop.get("type") or ""), "")
+            if shop_name and shop_type:
+                row["business_start"] = {"name": shop_name, "type": shop_type}
+        swing = _business_delta(item.get("business_event"))
+        if swing is not None:
+            row["business_event"] = swing
         incoming = item.get("partner_set")
         if isinstance(incoming, dict) and int(character["age_years"]) >= PARTNER_MIN_AGE and incoming.get("status") in PARTNER_STATUSES:
             partner_name = clean_name(str(incoming.get("name") or ""), "")
@@ -2076,13 +2365,18 @@ Return ONLY a JSON object with this shape:
       "child_name": null,
       "partner_set": null,
       "partner_end": false,
+      "career_start": null,
+      "career_level": null,
+      "career_leave": false,
+      "business_start": null,
+      "business_event": null,
       "species_effects": {"bloodlust": 0, "masquerade": 0, "hunter_heat": 0, "moon": 0, "control": 0, "mana": 0, "notoriety": 0}
     }
   ]
 }
 Rules:
 - 2 to 4 choices. Each must change the life in a different direction.
-- Continuity: use the name, age, flags, children, partner, species, subtype, pack, coven, and life_story_so_far. Do not contradict them.
+- Continuity: use the name, age, flags, children, partner, career, business, species, subtype, pack, coven, and life_story_so_far. Do not contradict them.
 - Never repeat a title or situation from recent_years.
 - If unlocked_paths or owned_careers are present, let some years branch into them. Ignore empty lists.
 - When species is not human, write the year through that body.
@@ -2101,6 +2395,10 @@ Rules:
 - partner_end true ends the partnership. Do not also set a partner on that choice.
 - If bond is 20 or lower, write a year in which the partnership might end: one choice stays, one choice leaves.
 - Meet, court, marry, and breakup years should be concrete and store-safe. No explicit sexual content.
+- career is null or {title, field, level, income}. business is null or {name, type, value}. When either is set, some years are the job, the boss, or the shop. Do not invent a job or a shop that is not on the record.
+- From age 18, career_start {title, field} hires them. Free fields are labor, service, and trade. medicine, law, and journalism only if that field is in owned_careers. Otherwise omit the start.
+- career_level is "up" or "down", and only for a job they already hold. career_leave true ends the job.
+- business_start {name, type} opens a shop when business is null. business_event is an integer swing in the shop's value, hundreds not millions, and only when a business exists.
 - Deltas are small integers. Money may move by hundreds, not millions.
 - Do not mention Legacy Marks, menus, or that this is a game.
 """
@@ -2735,6 +3033,9 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
         raise HTTPException(status_code=400, detail="That choice is not on the page")
     picked = choices[body.choice_index]
     character = save["character"]
+    blocked = career_block(character, picked, owned)
+    if blocked:
+        raise HTTPException(status_code=403, detail=blocked)
     age_now = int(character["age_years"])
     apply_choice(character, picked)
     line = f"Age {age_now}: {event_now.get('title')} — {picked.get('label')}."

@@ -376,6 +376,27 @@ export default function GameScreen() {
           ) : (
             <Text style={styles.note}>No one is written beside you.</Text>
           )}
+          <Text style={styles.section}>WORK</Text>
+          <View testID="career-row">
+            {save.character.career ? (
+              <StatLine
+                label={`${save.character.career.title} · ${save.character.career.field}`}
+                value={`Lv ${save.character.career.level} · ${moneyLabel(save.character.career.income)}/yr`}
+              />
+            ) : (
+              <Text style={styles.note}>No wage.</Text>
+            )}
+          </View>
+          <View testID="business-row">
+            {save.character.business ? (
+              <StatLine
+                label={`${save.character.business.name} · ${save.character.business.type}`}
+                value={moneyLabel(save.character.business.value)}
+              />
+            ) : (
+              <Text style={styles.note}>No shop.</Text>
+            )}
+          </View>
           <Text style={styles.section}>FLAGS</Text>
           {FLAG_LABELS.map((flag) => (
             <StatLine key={flag.key} label={flag.label} value={save.character.flags[flag.key]} />
