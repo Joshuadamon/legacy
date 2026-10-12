@@ -43,6 +43,8 @@ From `frontend`, `npm run lint` is `tsc --noEmit`.
 - A partner can be met, kept, married, or lost. The person at your side is the other parent, and their name and status stay on the death record
 - A job can be taken, climbed, and lost. A shop can be opened, and the heir keeps it
 
+The family line is a tree, oldest at the top and the living life at the bottom.
+
 ## Next
 
-The family tree, and skipping a few childhood years.
+More of the life is still to come.

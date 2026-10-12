@@ -112,6 +112,8 @@ export type HistoryYear = { age: number; title: string; choice: string; outcome:
 export type LineageEntry = {
   generation: number;
   name: string;
+  species: string;
+  age_at_death: number;
   years: string;
   cause_of_death: string | null;
   partner: { name: string; status: "dating" | "married" } | string | null;

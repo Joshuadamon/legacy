@@ -53,6 +53,7 @@ BOND_NEGLECT_AFTER = 3
 BOND_NEGLECT_DROP = 5
 BOND_BREAK_AT = 20
 PARTNER_STATUSES = ("dating", "married")
+LINE_SPECIES = ("human", "vampire", "lycanthrope", "witch")
 CAREER_MIN_AGE = 18
 CAREER_LEVEL_MAX = 10
 FREE_FIELDS = ("labor", "service", "trade")
@@ -1783,6 +1784,13 @@ def _migrate_save(save: dict[str, Any]) -> dict[str, Any]:
         save["history"] = []
     if not isinstance(save["lineage"], list):
         save["lineage"] = []
+    else:
+        cleaned_line: list[dict[str, Any]] = []
+        for entry in save["lineage"]:
+            normalized = normalize_lineage_entry(entry)
+            if normalized:
+                cleaned_line.append(normalized)
+        save["lineage"] = cleaned_line
     if isinstance(save.get("character"), dict):
         save["character"] = _migrate_character(save["character"])
     return save
@@ -2223,18 +2231,82 @@ def partner_record(character: dict[str, Any]) -> dict[str, str] | None:
     return {"name": str(partner["name"]), "status": status}
 
 
+def _lineage_age(raw: dict[str, Any]) -> int:
+    direct = raw.get("age_at_death")
+    if isinstance(direct, bool):
+        direct = None
+    if isinstance(direct, (int, float)) and int(direct) >= 0:
+        return int(direct)
+    if isinstance(direct, str) and direct.isdigit():
+        return int(direct)
+    years = raw.get("years")
+    if isinstance(years, str):
+        tail = re.split(r"[–\-]", years)[-1].strip().rstrip("y")
+        if tail.isdigit():
+            return int(tail)
+    return 0
+
+
+def _lineage_partner(raw: Any) -> dict[str, str] | str | None:
+    if isinstance(raw, str):
+        name = clean_name(raw, "")
+        return name or None
+    if not isinstance(raw, dict):
+        return None
+    name = clean_name(str(raw.get("name") or ""), "")
+    if not name:
+        return None
+    status = raw.get("status") if raw.get("status") in PARTNER_STATUSES else "dating"
+    return {"name": name, "status": status}
+
+
+def normalize_lineage_entry(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    name = clean_name(str(raw.get("name") or ""), "")
+    if not name:
+        return None
+    species = raw.get("species") if raw.get("species") in LINE_SPECIES else "human"
+    age = _lineage_age(raw)
+    try:
+        generation = max(1, int(raw.get("generation") or 1))
+    except (TypeError, ValueError):
+        generation = 1
+    cause = raw.get("cause_of_death")
+    return {
+        "generation": generation,
+        "name": name,
+        "species": species,
+        "age_at_death": age,
+        "years": f"0–{age}",
+        "cause_of_death": None if cause is None else str(cause),
+        "partner": _lineage_partner(raw.get("partner")),
+        "heir_id": str(raw.get("heir_id") or ""),
+        "heir_name": clean_name(str(raw.get("heir_name") or ""), ""),
+        "epitaph": str(raw.get("epitaph") or ""),
+    }
+
+
 def epitaph(save: dict[str, Any], heir_id: str, heir_name: str) -> dict[str, Any]:
     character = save["character"]
-    return {
-        "generation": int(save["generation"]),
-        "name": character["name"],
-        "years": f"0–{character['age_years']}",
-        "cause_of_death": save.get("cause_of_death"),
-        "partner": partner_record(character),
-        "heir_id": heir_id,
-        "heir_name": heir_name,
-        "epitaph": obituary(save),
-    }
+    species = character.get("species") if character.get("species") in LINE_SPECIES else "human"
+    age = max(0, int(character["age_years"]))
+    record = normalize_lineage_entry(
+        {
+            "generation": int(save["generation"]),
+            "name": character["name"],
+            "species": species,
+            "age_at_death": age,
+            "cause_of_death": save.get("cause_of_death"),
+            "partner": partner_record(character),
+            "heir_id": heir_id,
+            "heir_name": heir_name,
+            "epitaph": obituary(save),
+        }
+    )
+    if record is None:
+        raise RuntimeError("epitaph requires a name")
+    return record
 
 
 def _sanitize_event(raw: Any, character: dict[str, Any]) -> dict[str, Any] | None:
