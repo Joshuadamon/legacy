@@ -230,6 +230,19 @@ export function useNewGame() {
   });
 }
 
+export type YearMontage = {
+  text: string;
+  lines: string[];
+};
+
+export type SkipResult = {
+  years_skipped: number;
+  montage: YearMontage;
+  new_age: number;
+  stat_changes: Partial<Stats>;
+  save: Save;
+};
+
 export function useChoice() {
   const refresh = useInvalidateLife();
   return useMutation({
@@ -238,6 +251,14 @@ export function useChoice() {
         method: "POST",
         body: JSON.stringify({ choice_index }),
       }),
+    onSuccess: refresh,
+  });
+}
+
+export function useSkip() {
+  const refresh = useInvalidateLife();
+  return useMutation({
+    mutationFn: () => api<SkipResult>("/api/game/skip", { method: "POST" }),
     onSuccess: refresh,
   });
 }

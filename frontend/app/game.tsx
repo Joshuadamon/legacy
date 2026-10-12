@@ -22,12 +22,15 @@ import {
   useChoice,
   useGameState,
   useProfile,
+  useSkip,
   useSupernatural,
   useTransform,
   type Circle,
   type Flags,
   type LycanData,
   type Save,
+  type SkipResult,
+  type Stats,
   type VampireData,
   type WitchData,
 } from "../src/use-game";
@@ -40,6 +43,16 @@ const STAGE: Record<string, string> = {
   adult: "Adult",
   elder: "Elder",
 };
+
+const STAT_ROWS: { key: keyof Stats; label: string }[] = [
+  { key: "health", label: "Health" },
+  { key: "happiness", label: "Happiness" },
+  { key: "smarts", label: "Smarts" },
+  { key: "looks", label: "Looks" },
+  { key: "money", label: "Money" },
+  { key: "reputation", label: "Reputation" },
+  { key: "family", label: "Family" },
+];
 
 const FLAG_LABELS: { key: keyof Flags; label: string }[] = [
   { key: "morality", label: "Morality" },
@@ -106,6 +119,18 @@ const useStyles = makeStyles((palette) => ({
   chipOn: { borderColor: palette.accent },
   chipText: { color: palette.text, fontFamily: fonts.ui, fontSize: 15 },
   powers: { gap: 10, marginTop: 12 },
+  skipRow: { paddingHorizontal: 16, paddingTop: 4 },
+  montageLine: {
+    color: palette.text,
+    fontFamily: fonts.body,
+    fontSize: 16,
+    lineHeight: 24,
+    marginBottom: 12,
+  },
+  changeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6 },
+  deltaUp: { color: palette.good, fontFamily: fonts.uiMedium, fontSize: 15 },
+  deltaDown: { color: palette.danger, fontFamily: fonts.uiMedium, fontSize: 15 },
+  deltaFlat: { color: palette.textMuted, fontFamily: fonts.uiMedium, fontSize: 15 },
 }));
 
 const StyleSheetAbsolute = { position: "absolute" as const, left: 0, right: 0, top: 0, bottom: 0 };
@@ -185,12 +210,18 @@ function clanSlug(clan: string): string {
   return clan.toLowerCase().replace(/\s+/g, "-");
 }
 
+function signedChange(key: keyof Stats, value: number): string {
+  if (key === "money") return value > 0 ? `+${moneyLabel(value)}` : moneyLabel(value);
+  return value > 0 ? `+${value}` : String(value);
+}
+
 export default function GameScreen() {
   const styles = useStyles();
   const router = useRouter();
   const state = useGameState();
   const profile = useProfile();
   const choice = useChoice();
+  const skip = useSkip();
   const abandon = useAbandon();
   const turn = useTransform();
   const power = useSupernatural();
@@ -198,8 +229,10 @@ export default function GameScreen() {
   const lifeRef = useRef<BottomSheetModal>(null);
   const abandonRef = useRef<BottomSheetModal>(null);
   const powersRef = useRef<BottomSheetModal>(null);
+  const skipRef = useRef<BottomSheetModal>(null);
   const snaps = useMemo(() => ["78%"], []);
   const [toast, setToast] = useState<string | null>(null);
+  const [montage, setMontage] = useState<SkipResult | null>(null);
   const [partnerOpen, setPartnerOpen] = useState(false);
   const [clan, setClan] = useState("");
   const [subtype, setSubtype] = useState("");
@@ -225,6 +258,26 @@ export default function GameScreen() {
     if (!save) router.replace("/create");
     else if (!save.alive) router.replace("/heir");
   }, [state.isSuccess, state.isFetching, save, router]);
+
+  useEffect(() => {
+    if (!montage) return;
+    skipRef.current?.present();
+  }, [montage]);
+
+  async function skipYears() {
+    setToast(null);
+    try {
+      const result = await skip.mutateAsync();
+      if (!result.save.alive) {
+        router.replace("/heir");
+        return;
+      }
+      setMontage(result);
+    } catch (error) {
+      void hapticError();
+      setToast(error instanceof ApiError ? error.message : "The years did not pass.");
+    }
+  }
 
   async function pick(index: number) {
     setToast(null);
@@ -321,6 +374,14 @@ export default function GameScreen() {
           ))}
         </View>
       </ScrollView>
+      <View style={styles.skipRow}>
+        <GhostButton
+          testID="skip-years-button"
+          label={skip.isPending ? "Years passing..." : "Skip a few years"}
+          disabled={skip.isPending || choice.isPending}
+          onPress={() => void skipYears()}
+        />
+      </View>
       <View style={styles.bar}>
         <GhostButton fill testID="open-life-sheet" label="Life" onPress={() => lifeRef.current?.present()} />
         <GhostButton fill testID="open-lineage-button" label="Family" onPress={() => router.push("/lineage")} />
@@ -335,6 +396,42 @@ export default function GameScreen() {
           <Text style={styles.passingText}>A year passes...</Text>
         </View>
       ) : null}
+      {skip.isPending ? (
+        <View testID="years-passing" style={styles.passing}>
+          <ActivityIndicator color={colors.accent} />
+          <Text style={styles.passingText}>A few years pass...</Text>
+        </View>
+      ) : null}
+      <BottomSheetModal
+        ref={skipRef}
+        snapPoints={["62%"]}
+        backgroundStyle={{ backgroundColor: colors.surface }}
+        handleIndicatorStyle={{ backgroundColor: colors.accent }}
+      >
+        <BottomSheetScrollView contentContainerStyle={styles.sheet} testID="skip-montage">
+          <Text style={styles.sheetTitle}>A few years</Text>
+          {(montage?.montage.lines?.length ? montage.montage.lines : montage?.montage.text ? [montage.montage.text] : []).map(
+            (line, index) => (
+              <Text key={`${index}-${line}`} style={styles.montageLine}>
+                {line}
+              </Text>
+            ),
+          )}
+          <Text style={styles.section}>WHAT CHANGED</Text>
+          {STAT_ROWS.map((row) => {
+            const value = montage?.stat_changes[row.key] ?? 0;
+            const tone = value > 0 ? styles.deltaUp : value < 0 ? styles.deltaDown : styles.deltaFlat;
+            return (
+              <View key={row.key} style={styles.changeRow}>
+                <Text style={styles.note}>{row.label}</Text>
+                <Text style={tone}>{signedChange(row.key, value)}</Text>
+              </View>
+            );
+          })}
+          <View style={{ height: 16 }} />
+          <GhostButton testID="close-skip-sheet" label="Back to the year" onPress={() => skipRef.current?.dismiss()} />
+        </BottomSheetScrollView>
+      </BottomSheetModal>
       <BottomSheetModal
         ref={lifeRef}
         snapPoints={snaps}

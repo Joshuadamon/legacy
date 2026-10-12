@@ -41,6 +41,9 @@ BLOODLUST_YEARLY = 12
 MANA_YEARLY = 12
 HUNTER_DEATH_AT = 100
 HUNTER_DEATH_CAUSE = "Hunters closed the account. The body was found in the open."
+SKIP_YEARS = 3
+CLOSING_TITLES = frozenset({"The last account", "One more season"})
+AGE_END_CAUSE = "The body kept its own calendar."
 PARTNER_MIN_AGE = 16
 BOND_START = 55
 BOND_COURT = 12
@@ -2458,6 +2461,162 @@ async def generate_event(character: dict[str, Any], history: list[dict[str, Any]
     return fallback_event(character, history, generation)
 
 
+def event_blocks_skip(event: Any) -> bool:
+    """A closing year or a fatal choice has to be played. Skip is only for quiet years."""
+    if not isinstance(event, dict):
+        return False
+    if str(event.get("title") or "").strip() in CLOSING_TITLES:
+        return True
+    choices = event.get("choices")
+    if not isinstance(choices, list):
+        return False
+    return any(isinstance(item, dict) and item.get("fatal") is True for item in choices)
+
+
+def skip_year_drift(character: dict[str, Any]) -> None:
+    """A quiet year nudges meters by a point or two. No windfall and no collapse on its own."""
+    age = int(character["age_years"])
+    for index, key in enumerate(METER_STATS):
+        delta = ((age * 3 + index * 2) % 5) - 2
+        character["stats"][key] = clamp(int(character["stats"][key]) + delta)
+    pocket = ((age * 7) % 11) - 5
+    character["stats"]["money"] = clamp_money(int(character["stats"]["money"]) + pocket)
+    for index, key in enumerate(FLAG_KEYS):
+        delta = ((age + index * 2) % 3) - 1
+        character["flags"][key] = clamp(int(character["flags"][key]) + delta)
+
+
+def _quiet_year_line(character: dict[str, Any], age: int, ended: str | None) -> str:
+    if ended:
+        return f"Age {age}. The quiet ran out. {ended}"
+    if age >= 100:
+        return f"Age {age}. The years narrowed, and the next one will not be quiet."
+    name = character.get("name") or "You"
+    partner = _partner_now(character)
+    career = character.get("career") if isinstance(character.get("career"), dict) else None
+    business = character.get("business") if isinstance(character.get("business"), dict) else None
+    species = character.get("species") or "human"
+    slot = age % 3
+    if partner and slot == 0:
+        return f"Age {age}. {partner['name']} was still in the house. The year did not ask for a decision."
+    if career and slot == 1:
+        title = career.get("title") or "work"
+        return f"Age {age}. The {title} work stayed. Pay arrived. Nothing was promoted and nothing was lost."
+    if business and slot == 2:
+        shop = business.get("name") or "The shop"
+        return f"Age {age}. {shop} opened and closed on the usual days."
+    if species == "vampire":
+        lines = (
+            f"Age {age}. {name} kept the evenings small and the curtains closed.",
+            f"Age {age}. Hunger stayed a private fact. The street did not learn a name.",
+            f"Age {age}. Another year of being careful after dark.",
+        )
+    elif species == "lycanthrope":
+        lines = (
+            f"Age {age}. The moon came and went. Mornings were accounted for.",
+            f"Age {age}. {name} stayed where the county already knew the nights.",
+            f"Age {age}. Control held, mostly. The town told no new story.",
+        )
+    elif species == "witch":
+        lines = (
+            f"Age {age}. The work stayed in the kitchen and off the street.",
+            f"Age {age}. {name} did nothing anyone would repeat.",
+            f"Age {age}. A quiet year. The craft was not the news.",
+        )
+    else:
+        lines = (
+            f"Age {age}. The year was ordinary, which is a kind of luck.",
+            f"Age {age}. Days stacked without a story worth retelling.",
+            f"Age {age}. {name} kept the same habits and the same address.",
+        )
+    return lines[slot]
+
+
+def fallback_montage(character: dict[str, Any], years: list[dict[str, Any]]) -> dict[str, Any]:
+    lines = [_quiet_year_line(character, int(year["age"]), year.get("ended")) for year in years]
+    return {"text": " ".join(lines), "lines": lines}
+
+
+def _clean_montage(raw: Any, years: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    incoming = raw.get("lines")
+    if not isinstance(incoming, list) or len(incoming) != len(years):
+        return None
+    lines: list[str] = []
+    for item, year in zip(incoming, years):
+        text = " ".join(str(item or "").split())
+        text = "".join(ch for ch in text if ch.isprintable())
+        if not text:
+            return None
+        age = int(year["age"])
+        if str(age) not in text:
+            text = f"Age {age}. {text}"
+        lines.append(text[:280])
+    summary = " ".join(str(raw.get("text") or "").split())
+    summary = "".join(ch for ch in summary if ch.isprintable()).strip()
+    if not summary:
+        summary = " ".join(lines)
+    return {"text": summary[:1200], "lines": lines}
+
+
+MONTAGE_PROMPT = """You write a quiet montage for LEGACY, a dark, dry, store-safe life simulator for adults.
+The player let a few uneventful years pass. Return ONLY a JSON object:
+{"lines": ["Age N. one or two sentences."], "text": "those lines as one short summary"}
+Rules:
+- One line per age in the years list, in order. Do not add or skip a year.
+- Quiet years only. No marriage, no birth, no new job, no breakup, no shop opening, no promotion.
+- If a year has ended set, that line is the end of the life, in plain words, and it is the last line.
+- Second person or the character's name. Concrete. No purple prose.
+- No explicit sexual content. No graphic injury. No real-world how-to for crime, drugs, or self-harm.
+- Do not mention Legacy Marks, menus, or that this is a game.
+"""
+
+
+async def llm_montage(character: dict[str, Any], years: list[dict[str, Any]]) -> dict[str, Any] | None:
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or ""
+    if not api_key or not years:
+        return None
+    try:
+        from anthropic import AsyncAnthropic
+    except ImportError:
+        logger.warning("anthropic SDK is not installed; using the written montage")
+        return None
+    payload = {
+        "name": character.get("name"),
+        "species": character.get("species") or "human",
+        "partner": character.get("partner"),
+        "career": character.get("career"),
+        "business": character.get("business"),
+        "years": years,
+    }
+    client = AsyncAnthropic(api_key=api_key)
+    try:
+        message = await client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=700,
+            system=MONTAGE_PROMPT,
+            messages=[{"role": "user", "content": json.dumps(payload, default=str)}],
+        )
+    except Exception:
+        logger.exception("montage generation failed")
+        return None
+    parts: list[str] = []
+    for block in message.content:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return _clean_montage(parse_json_object("".join(parts)), years)
+
+
+async def compose_montage(character: dict[str, Any], years: list[dict[str, Any]]) -> dict[str, Any]:
+    generated = await llm_montage(character, years)
+    if generated:
+        return generated
+    return fallback_montage(character, years)
+
+
+
 # --- storage -----------------------------------------------------------------
 
 class _Result:
@@ -3079,6 +3238,63 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
     await persist_save(save)
     fresh_profile = await ensure_profile(user["user_id"])
     return {"save": client_save(save), "profile": profile_view(fresh_profile), "marks_earned": int(save.get("marks_earned") or 0)}
+
+
+@api.post("/game/skip")
+async def game_skip(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    profile = await ensure_profile(user["user_id"])
+    owned = list(profile.get("owned_packs") or [])
+    save = await load_active_save(user["user_id"])
+    if not save:
+        raise HTTPException(status_code=404, detail="No life is open")
+    save = await repair_save(save, owned)
+    if not save or not save.get("alive"):
+        raise HTTPException(status_code=409, detail="This life is already over")
+    character = save["character"]
+    if int(character["age_years"]) >= 100:
+        raise HTTPException(status_code=409, detail="This life is already at its end.")
+    if event_blocks_skip(save.get("current_event")):
+        raise HTTPException(status_code=409, detail="This year cannot be skipped.")
+    before = {key: int(character["stats"][key]) for key in STAT_KEYS}
+    years: list[dict[str, Any]] = []
+    cause: str | None = None
+    true_death = False
+    for _ in range(SKIP_YEARS):
+        hunter_cause = advance_life(character, owned)
+        age = int(character["age_years"])
+        if hunter_cause:
+            cause = hunter_cause
+            true_death = True
+        elif int(character["stats"]["health"]) <= 0 or age >= 105:
+            cause = AGE_END_CAUSE
+        else:
+            skip_year_drift(character)
+            if int(character["stats"]["health"]) <= 0:
+                cause = AGE_END_CAUSE
+        years.append({"age": age, "ended": cause})
+        if cause or age >= 100:
+            break
+    montage = await compose_montage(character, years)
+    for line in montage["lines"]:
+        character["life_log"].append(line)
+    trim_log(character["life_log"])
+    save["last_outcome"] = montage["text"][:400]
+    if cause:
+        if true_death:
+            save["true_death"] = True
+        await finish_death(save, cause)
+        save["current_event"] = None
+    else:
+        save["current_event"] = await generate_event(character, save["history"], owned, int(save["generation"]))
+    await persist_save(save)
+    stat_changes = {key: int(character["stats"][key]) - before[key] for key in STAT_KEYS}
+    return {
+        "years_skipped": len(years),
+        "montage": montage,
+        "new_age": int(character["age_years"]),
+        "stat_changes": stat_changes,
+        "save": client_save(save),
+    }
 
 
 @api.get("/game/heirs")
