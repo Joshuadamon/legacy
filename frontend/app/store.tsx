@@ -1,12 +1,13 @@
 import { BottomSheetModal, BottomSheetView } from "@gorhom/bottom-sheet";
-import { useRouter } from "expo-router";
-import { useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import * as Linking from "expo-linking";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 
 import { ApiError } from "../src/api";
 import { GhostButton, PrimaryButton, Screen, Toast, hapticError, hapticSuccess } from "../src/components/game-ui";
 import { colors, fonts, makeStyles } from "../src/theme";
-import { useBuyPack, useStore, useVerifyPurchase, type StorePack } from "../src/use-game";
+import { useBuyPack, useStore, useVerifyPurchase, useWebCheckout, type CoinPack, type StorePack } from "../src/use-game";
 
 const CHIP_LABEL: Record<string, string> = {
   all: "All",
@@ -70,6 +71,9 @@ export default function StoreScreen() {
   const store = useStore();
   const buy = useBuyPack();
   const verify = useVerifyPurchase();
+  const checkout = useWebCheckout();
+  const params = useLocalSearchParams<{ checkout?: string }>();
+  const onWeb = Platform.OS === "web";
   const [category, setCategory] = useState("all");
   const [toast, setToast] = useState<string | null>(null);
   const [pending, setPending] = useState<StorePack | null>(null);
@@ -77,6 +81,16 @@ export default function StoreScreen() {
   const snaps = useMemo(() => ["46%"], []);
   const chips = ["all", ...(store.data?.categories ?? [])];
   const packs = (store.data?.packs ?? []).filter((pack) => category === "all" || pack.category === category);
+
+  useEffect(() => {
+    if (!onWeb) return;
+    if (params.checkout === "success") {
+      setToast("Payment received. Coins land in this browser's wallet when Stripe confirms them.");
+      void store.refetch();
+    } else if (params.checkout === "cancel") {
+      setToast("Checkout canceled.");
+    }
+  }, [onWeb, params.checkout, store]);
 
   function ask(pack: StorePack) {
     if (pack.owned) return;
@@ -90,6 +104,17 @@ export default function StoreScreen() {
     setPending(pack);
     setToast(null);
     sheet.current?.present();
+  }
+
+  async function buyCoinsOnWeb(packId: string) {
+    setToast(null);
+    try {
+      const result = await checkout.mutateAsync(packId);
+      if (result.url) await Linking.openURL(result.url);
+    } catch (error) {
+      void hapticError();
+      setToast(error instanceof ApiError ? error.message : "Checkout could not be opened.");
+    }
   }
 
   async function buyCoins(productId: string, amount: number) {
@@ -187,21 +212,27 @@ export default function StoreScreen() {
           </View>
         ))}
         <Text style={styles.kicker}>GET COINS</Text>
-        <Text style={styles.blurb}>Bought coins. Marks stay earned. These buttons are TEST until the store is live.</Text>
-        <View testID="coin-packs">
-          {(store.data?.coin_packs ?? []).map((pack) => (
-            <View key={pack.id} testID={`coin-pack-${pack.id}`} style={styles.card}>
-              <Text style={[styles.cardTitle, styles.coinTitle]}>{pack.coins} Coins</Text>
-              <Text style={styles.price}>{pack.price_label}</Text>
-              <GhostButton
-                testID={`buy-${pack.id}`}
-                label={verify.isPending ? "Checking..." : `TEST · ${pack.price_label}`}
-                disabled={verify.isPending}
-                onPress={() => void buyCoins(pack.product_id, pack.coins)}
-              />
+        {onWeb ? (
+          <WebCoinShop packs={store.data?.coin_packs ?? []} pending={checkout.isPending} onBuy={(id) => void buyCoinsOnWeb(id)} />
+        ) : (
+          <>
+            <Text style={styles.blurb}>Bought coins. Marks stay earned. These buttons are TEST until the store is live.</Text>
+            <View testID="coin-packs">
+              {(store.data?.coin_packs ?? []).map((pack) => (
+                <View key={pack.id} testID={`coin-pack-${pack.id}`} style={styles.card}>
+                  <Text style={[styles.cardTitle, styles.coinTitle]}>{pack.coins} Coins</Text>
+                  <Text style={styles.price}>{pack.price_label}</Text>
+                  <GhostButton
+                    testID={`buy-${pack.id}`}
+                    label={verify.isPending ? "Checking..." : `TEST · ${pack.price_label}`}
+                    disabled={verify.isPending}
+                    onPress={() => void buyCoins(pack.product_id, pack.coins)}
+                  />
+                </View>
+              ))}
             </View>
-          ))}
-        </View>
+          </>
+        )}
         <Text style={styles.kicker}>IMMORTALITY</Text>
         <View testID="immortal-offer" style={styles.card}>
           <Text style={styles.cardTitle}>Ageless</Text>
@@ -248,6 +279,37 @@ export default function StoreScreen() {
   );
 }
 
+function WebCoinShop({
+  packs,
+  pending,
+  onBuy,
+}: {
+  packs: CoinPack[];
+  pending: boolean;
+  onBuy: (packId: string) => void;
+}) {
+  const styles = useStyles();
+  return (
+    <>
+      <Text style={styles.blurb}>Bought coins stay in this browser's wallet. Marks stay earned.</Text>
+      <View testID="coin-packs">
+        {packs.map((pack) => (
+          <View key={pack.id} testID={`coin-pack-${pack.id}`} style={styles.card}>
+            <Text style={[styles.cardTitle, styles.coinTitle]}>{pack.coins} Coins</Text>
+            <Text style={styles.price}>{pack.price_label}</Text>
+            <GhostButton
+              testID={`buy-${pack.id}`}
+              label={pending ? "Opening checkout..." : `Get · ${pack.price_label}`}
+              disabled={pending}
+              onPress={() => onBuy(pack.id)}
+            />
+          </View>
+        ))}
+      </View>
+    </>
+  );
+}
+
 function GhostChip({
   label,
   selected,
@@ -266,7 +328,14 @@ function GhostChip({
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
-      style={[styles.chip, selected ? styles.chipOn : null]}
+      style={(state) => {
+        const hovered = Boolean((state as { hovered?: boolean }).hovered);
+        return [
+          styles.chip,
+          selected || hovered ? styles.chipOn : null,
+          Platform.OS === "web" ? { cursor: "pointer" } : null,
+        ];
+      }}
     >
       <Text style={[styles.chipText, selected ? styles.chipTextOn : null]}>{label}</Text>
     </Pressable>

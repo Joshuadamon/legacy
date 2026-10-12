@@ -1,3 +1,5 @@
+import { Platform } from "react-native";
+
 import { secureGet, secureSet } from "./utils/storage";
 
 const TOKEN_KEY = "session_token";
@@ -34,6 +36,8 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     headers.set("Content-Type", "application/json");
   }
   if (memoryToken) headers.set("Authorization", `Bearer ${memoryToken}`);
+  const platform = Platform.OS === "ios" ? "ios" : Platform.OS === "android" ? "android" : "web";
+  headers.set("X-Legacy-Platform", platform);
   const response = await fetch(`${base}${path}`, { ...options, headers });
   const text = await response.text();
   let body: { detail?: unknown } | null = null;

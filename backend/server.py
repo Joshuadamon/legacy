@@ -14,10 +14,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -521,21 +522,72 @@ CATEGORIES = ("career", "skills", "cosmetic", "lifestyle", "supernatural")
 # TODO: finalize these product IDs when the bundle ID is confirmed.
 # The listing ID this build will use is com.anvilandember.legacy.
 COIN_PACKS: list[dict[str, Any]] = [
-    {"id": "coins100", "product_id": "com.anvilandember.legacy.coins100", "coins": 100, "price_label": "$0.99"},
-    {"id": "coins250", "product_id": "com.anvilandember.legacy.coins250", "coins": 250, "price_label": "$1.99"},
-    {"id": "coins500", "product_id": "com.anvilandember.legacy.coins500", "coins": 500, "price_label": "$3.99"},
-    {"id": "coins1000", "product_id": "com.anvilandember.legacy.coins1000", "coins": 1000, "price_label": "$6.99"},
-    {"id": "coins2500", "product_id": "com.anvilandember.legacy.coins2500", "coins": 2500, "price_label": "$14.99"},
-    {"id": "coins10000", "product_id": "com.anvilandember.legacy.coins10000", "coins": 10000, "price_label": "$49.99"},
-    {"id": "coins25000", "product_id": "com.anvilandember.legacy.coins25000", "coins": 25000, "price_label": "$99.99"},
+    {"id": "coins100", "product_id": "com.anvilandember.legacy.coins100", "coins": 100, "price_cents": 99, "price_label": "$0.99"},
+    {"id": "coins250", "product_id": "com.anvilandember.legacy.coins250", "coins": 250, "price_cents": 199, "price_label": "$1.99"},
+    {"id": "coins500", "product_id": "com.anvilandember.legacy.coins500", "coins": 500, "price_cents": 399, "price_label": "$3.99"},
+    {"id": "coins1000", "product_id": "com.anvilandember.legacy.coins1000", "coins": 1000, "price_cents": 699, "price_label": "$6.99"},
+    {"id": "coins2500", "product_id": "com.anvilandember.legacy.coins2500", "coins": 2500, "price_cents": 1499, "price_label": "$14.99"},
+    {"id": "coins10000", "product_id": "com.anvilandember.legacy.coins10000", "coins": 10000, "price_cents": 4999, "price_label": "$49.99"},
+    {"id": "coins25000", "product_id": "com.anvilandember.legacy.coins25000", "coins": 25000, "price_cents": 9999, "price_label": "$99.99"},
 ]
 COIN_PACKS_BY_PRODUCT = {item["product_id"]: item for item in COIN_PACKS}
+COIN_PACKS_BY_ID = {item["id"]: item for item in COIN_PACKS}
+COIN_PLATFORMS = ("web", "ios", "android")
+CHECKOUT_NOT_CONFIGURED = "Coin checkout is not configured."
+STRIPE_API_VERSION = "2026-09-30.endive"
+STRIPE_GRANT_EVENTS = ("checkout.session.completed", "checkout.session.async_payment_succeeded")
 # TODO: finalize when the bundle ID is confirmed (com.anvilandember.legacy).
 IMMORTAL_PRODUCT_ID = "com.anvilandember.legacy.immortal.monthly"
 IMMORTAL_ENTITLEMENT = "immortal"
 IMMORTAL_PRICE_LABEL = "$14.99/month"
 IMMORTAL_TERMS = "$14.99/month, auto-renews until canceled."
 TEST_PURCHASE_RECEIPT = "legacy-test-receipt"
+
+
+def _wallet_amount(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def coin_wallets(raw: Any) -> dict[str, int]:
+    """Per-platform balances. A flat Combo 1 number moves into the web wallet once."""
+    if isinstance(raw, dict):
+        return {name: _wallet_amount(raw.get(name)) for name in COIN_PLATFORMS}
+    wallets = {name: 0 for name in COIN_PLATFORMS}
+    if raw is None or isinstance(raw, bool):
+        return wallets
+    wallets["web"] = _wallet_amount(raw)
+    return wallets
+
+
+def request_platform(value: str | None) -> str:
+    raw = (value or "").strip().lower()
+    if raw in COIN_PLATFORMS:
+        return raw
+    return "web"
+
+
+def wallet_balance(profile: dict[str, Any], platform: str | None) -> int:
+    return coin_wallets(profile.get("coins"))[request_platform(platform)]
+
+
+def debit_coins(profile: dict[str, Any], platform: str, cost: int) -> None:
+    """Replace the whole coins object. MemoryCollection $set does not walk dotted paths."""
+    wallets = coin_wallets(profile.get("coins"))
+    if wallets[platform] < cost:
+        raise HTTPException(status_code=402, detail="Not enough Coins")
+    wallets[platform] -= cost
+    profile["coins"] = wallets
+
+
+def credit_coins(profile: dict[str, Any], platform: str, amount: int) -> None:
+    wallets = coin_wallets(profile.get("coins"))
+    wallets[platform] = wallets[platform] + int(amount)
+    profile["coins"] = wallets
 
 
 def choice(
@@ -2020,8 +2072,7 @@ def _migrate_save(save: dict[str, Any]) -> dict[str, Any]:
 
 def _migrate_profile(profile: dict[str, Any]) -> dict[str, Any]:
     profile.setdefault("marks", STARTING_MARKS)
-    if profile.get("coins") is None:
-        profile["coins"] = 0
+    profile["coins"] = coin_wallets(profile.get("coins"))
     profile.setdefault("owned_packs", [])
     profile.setdefault("lives_lived", 0)
     if not isinstance(profile.get("entitlements"), list):
@@ -2030,7 +2081,6 @@ def _migrate_profile(profile: dict[str, Any]) -> dict[str, Any]:
     profile.setdefault("created_at", now())
     profile.setdefault("updated_at", now())
     profile["marks"] = max(0, int(profile["marks"]))
-    profile["coins"] = max(0, int(profile["coins"]))
     if not isinstance(profile["owned_packs"], list):
         profile["owned_packs"] = []
     profile["lives_lived"] = max(0, int(profile["lives_lived"]))
@@ -3088,12 +3138,22 @@ class MemoryCollection:
 
 
 class Database:
-    def __init__(self, saves: Any, users: Any, sessions: Any, profiles: Any, exchanges: Any, kind: str):
+    def __init__(
+        self,
+        saves: Any,
+        users: Any,
+        sessions: Any,
+        profiles: Any,
+        exchanges: Any,
+        stripe_events: Any,
+        kind: str,
+    ):
         self.saves = saves
         self.users = users
         self.sessions = sessions
         self.profiles = profiles
         self.exchanges = exchanges
+        self.stripe_events = stripe_events
         self.kind = kind
 
 
@@ -3110,6 +3170,7 @@ async def connect_db() -> Database:
             MemoryCollection(),
             MemoryCollection(),
             MemoryCollection(),
+            MemoryCollection(),
             "memory",
         )
         return db
@@ -3118,7 +3179,15 @@ async def connect_db() -> Database:
     mongo_client = AsyncIOMotorClient(MONGO_URL, serverSelectionTimeoutMS=4000)
     await mongo_client.admin.command("ping")
     mongo = mongo_client[DB_NAME]
-    db = Database(mongo.saves, mongo.users, mongo.sessions, mongo.user_profiles, mongo.session_exchanges, "mongo")
+    db = Database(
+        mongo.saves,
+        mongo.users,
+        mongo.sessions,
+        mongo.user_profiles,
+        mongo.session_exchanges,
+        mongo.stripe_events,
+        "mongo",
+    )
     return db
 
 
@@ -3172,7 +3241,7 @@ def profile_payload(profile: dict[str, Any]) -> dict[str, Any]:
     return {
         "user_id": profile["user_id"],
         "marks": int(profile["marks"]),
-        "coins": int(profile["coins"]),
+        "coins": coin_wallets(profile.get("coins")),
         "owned_packs": list(profile.get("owned_packs") or []),
         "lives_lived": int(profile["lives_lived"]),
         "entitlements": list(profile.get("entitlements") or []),
@@ -3214,13 +3283,13 @@ async def ensure_profile(user_id: str) -> dict[str, Any]:
     return created
 
 
-def profile_view(profile: dict[str, Any]) -> dict[str, Any]:
+def profile_view(profile: dict[str, Any], platform: str | None = None) -> dict[str, Any]:
     owned = list(profile.get("owned_packs") or [])
     entitlements = list(profile.get("entitlements") or [])
     return {
         "user_id": profile["user_id"],
         "marks": int(profile["marks"]),
-        "coins": int(profile["coins"]),
+        "coins": wallet_balance(profile, platform),
         "owned_packs": owned,
         "lives_lived": int(profile["lives_lived"]),
         "immortal": IMMORTAL_ENTITLEMENT in set(entitlements),
@@ -3413,6 +3482,10 @@ class HeirIn(BaseModel):
 
 class BuyIn(BaseModel):
     pack_id: str
+
+
+class WebCheckoutIn(BaseModel):
+    pack_id: str = Field(min_length=1, max_length=40)
 
 
 class VerifyIn(BaseModel):
@@ -3773,7 +3846,11 @@ async def finish_death(save: dict[str, Any], cause: str) -> dict[str, Any]:
 
 
 @api.post("/game/choice")
-async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def game_choice(
+    body: ChoiceIn,
+    user: dict[str, Any] = Depends(current_user),
+    x_legacy_platform: str | None = Header(default=None),
+) -> dict[str, Any]:
     profile = await ensure_profile(user["user_id"])
     save = await load_active_save(user["user_id"])
     if not save:
@@ -3835,7 +3912,11 @@ async def game_choice(body: ChoiceIn, user: dict[str, Any] = Depends(current_use
             save["current_event"] = await generate_event(character, save["history"], owned, int(save["generation"]), immortal)
     await persist_save(save)
     fresh_profile = await ensure_profile(user["user_id"])
-    return {"save": client_save(save), "profile": profile_view(fresh_profile), "marks_earned": int(save.get("marks_earned") or 0)}
+    return {
+        "save": client_save(save),
+        "profile": profile_view(fresh_profile, x_legacy_platform),
+        "marks_earned": int(save.get("marks_earned") or 0),
+    }
 
 
 @api.post("/game/skip")
@@ -3990,9 +4071,12 @@ async def game_abandon(user: dict[str, Any] = Depends(current_user)) -> dict[str
 
 
 @api.get("/profile")
-async def get_profile(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def get_profile(
+    user: dict[str, Any] = Depends(current_user),
+    x_legacy_platform: str | None = Header(default=None),
+) -> dict[str, Any]:
     profile = await ensure_profile(user["user_id"])
-    return {"profile": profile_view(profile)}
+    return {"profile": profile_view(profile, x_legacy_platform)}
 
 
 def verify_purchase_test_stub(product_id: str, receipt: str, active: bool | None) -> dict[str, Any]:
@@ -4000,7 +4084,8 @@ def verify_purchase_test_stub(product_id: str, receipt: str, active: bool | None
 
     LEGACY_TEST_PURCHASES defaults to "1" for local play. Set it to "0" to refuse
     every grant. The only accepted receipt is TEST_PURCHASE_RECEIPT. This function
-    is the only path that adds coins or the immortal entitlement.
+    grants the calling platform's coin wallet, or the immortal entitlement.
+    Web coin purchases are granted only by the Stripe webhook.
     """
     if os.environ.get("LEGACY_TEST_PURCHASES", "1") != "1":
         raise HTTPException(status_code=403, detail="Purchases cannot be verified")
@@ -4019,7 +4104,10 @@ def verify_purchase_test_stub(product_id: str, receipt: str, active: bool | None
 
 
 @api.get("/store")
-async def get_store(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def get_store(
+    user: dict[str, Any] = Depends(current_user),
+    x_legacy_platform: str | None = Header(default=None),
+) -> dict[str, Any]:
     profile = await ensure_profile(user["user_id"])
     owned = set(profile.get("owned_packs") or [])
     packs = []
@@ -4047,7 +4135,7 @@ async def get_store(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
     immortal = IMMORTAL_ENTITLEMENT in set(profile.get("entitlements") or [])
     return {
         "marks": int(profile["marks"]),
-        "coins": int(profile["coins"]),
+        "coins": wallet_balance(profile, x_legacy_platform),
         "lives_lived": int(profile["lives_lived"]),
         "categories": list(CATEGORIES),
         "packs": packs,
@@ -4063,10 +4151,15 @@ async def get_store(user: dict[str, Any] = Depends(current_user)) -> dict[str, A
 
 
 @api.post("/store/buy")
-async def store_buy(body: BuyIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def store_buy(
+    body: BuyIn,
+    user: dict[str, Any] = Depends(current_user),
+    x_legacy_platform: str | None = Header(default=None),
+) -> dict[str, Any]:
     pack = PACKS_BY_ID.get(body.pack_id)
     if not pack:
         raise HTTPException(status_code=404, detail="Unknown pack")
+    platform = request_platform(x_legacy_platform)
     profile = await ensure_profile(user["user_id"])
     owned = list(profile.get("owned_packs") or [])
     if body.pack_id in owned:
@@ -4074,9 +4167,7 @@ async def store_buy(body: BuyIn, user: dict[str, Any] = Depends(current_user)) -
     currency = pack.get("currency") or "marks"
     cost = int(pack["cost"])
     if currency == "coins":
-        if int(profile["coins"]) < cost:
-            raise HTTPException(status_code=402, detail="Not enough Coins")
-        profile["coins"] = int(profile["coins"]) - cost
+        debit_coins(profile, platform, cost)
     else:
         if int(profile["marks"]) < cost:
             raise HTTPException(status_code=402, detail="Not enough Legacy Marks")
@@ -4090,17 +4181,22 @@ async def store_buy(body: BuyIn, user: dict[str, Any] = Depends(current_user)) -
         repaired = await repair_save(save, list(updated.get("owned_packs") or []))
         if repaired:
             await persist_save(repaired)
-    return {"profile": profile_view(updated), "pack_id": body.pack_id}
+    return {"profile": profile_view(updated, platform), "pack_id": body.pack_id}
 
 
 @api.post("/store/purchase/verify")
-async def purchase_verify(body: VerifyIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def purchase_verify(
+    body: VerifyIn,
+    user: dict[str, Any] = Depends(current_user),
+    x_legacy_platform: str | None = Header(default=None),
+) -> dict[str, Any]:
     granted = verify_purchase_test_stub(body.product_id, body.receipt, body.active)
+    platform = request_platform(x_legacy_platform)
     profile = await ensure_profile(user["user_id"])
     coins_granted = 0
     if granted["kind"] == "coins":
         coins_granted = int(granted["coins"])
-        profile["coins"] = int(profile["coins"]) + coins_granted
+        credit_coins(profile, platform, coins_granted)
     elif granted["kind"] == "entitlement":
         held = set(profile.get("entitlements") or [])
         if granted["active"]:
@@ -4113,7 +4209,7 @@ async def purchase_verify(body: VerifyIn, user: dict[str, Any] = Depends(current
     await save_profile(profile)
     updated = await ensure_profile(user["user_id"])
     return {
-        "profile": profile_view(updated),
+        "profile": profile_view(updated, platform),
         "coins_granted": coins_granted,
         "immortal": IMMORTAL_ENTITLEMENT in set(updated.get("entitlements") or []),
         "product_id": body.product_id,
@@ -4176,6 +4272,191 @@ async def game_pass_torch(body: PassTorchIn, user: dict[str, Any] = Depends(curr
     save["current_event"] = await generate_event(nxt, [], owned, int(save["generation"]), True)
     await persist_save(save)
     return {"save": client_save(save)}
+
+
+def _env_secret(name: str) -> str:
+    return (os.environ.get(name) or "").strip()
+
+
+def stripe_secret_key() -> str:
+    key = _env_secret("STRIPE_SECRET_KEY")
+    if not key.startswith(("sk_test_", "rk_test_")):
+        raise HTTPException(status_code=503, detail=CHECKOUT_NOT_CONFIGURED)
+    return key
+
+
+def stripe_webhook_secret() -> str:
+    secret = _env_secret("STRIPE_WEBHOOK_SECRET")
+    if not secret:
+        raise HTTPException(status_code=503, detail=CHECKOUT_NOT_CONFIGURED)
+    return secret
+
+
+def browser_origin(origin: str | None) -> str:
+    raw = (origin or "").strip()
+    if not raw or any(ch in raw for ch in "\r\n\\ "):
+        raise HTTPException(status_code=400, detail="Open checkout from the game in the browser.")
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="Open checkout from the game in the browser.")
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{parsed.hostname}{port}"
+
+
+def open_stripe_checkout(params: dict[str, Any]) -> str:
+    key = stripe_secret_key()
+    try:
+        import stripe
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=CHECKOUT_NOT_CONFIGURED) from exc
+    client = stripe.StripeClient(key, stripe_version=STRIPE_API_VERSION)
+    try:
+        session = client.v1.checkout.sessions.create(params)
+    except Exception as exc:
+        logger.info("stripe checkout failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Checkout could not be opened.") from exc
+    url = getattr(session, "url", None)
+    if not isinstance(url, str) or not url.startswith("https://"):
+        raise HTTPException(status_code=502, detail="Checkout could not be opened.")
+    return url
+
+
+def verify_stripe_event(payload: bytes, signature: str | None) -> Any:
+    secret = stripe_webhook_secret()
+    if not signature or not payload:
+        raise HTTPException(status_code=400, detail="Stripe signature could not be verified.")
+    try:
+        import stripe
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=CHECKOUT_NOT_CONFIGURED) from exc
+    try:
+        event = stripe.Webhook.construct_event(payload, signature, secret)
+    except Exception as exc:
+        logger.info("stripe signature rejected: %s", type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Stripe signature could not be verified.") from exc
+    if hasattr(event, "to_dict"):
+        event = event.to_dict()
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Stripe signature could not be verified.")
+    return event
+
+
+def _session_value(session: Any, key: str) -> Any:
+    if hasattr(session, "get"):
+        return session.get(key)
+    return getattr(session, key, None)
+
+
+async def _remember_stripe_event(record: dict[str, Any]) -> None:
+    store = require_db()
+    record.setdefault("created_at", now())
+    record.setdefault("deleted_at", None)
+    await store.stripe_events.insert_one(record)
+
+
+async def grant_web_coins_from_session(event_id: str, session: Any) -> None:
+    """Grant the pack's coins to the web wallet. The client does not choose the wallet."""
+    store = require_db()
+    if await store.stripe_events.find_one({"event_id": event_id, "deleted_at": None}):
+        return
+    session_id = str(_session_value(session, "id") or "")
+    if session_id and await store.stripe_events.find_one(
+        {"session_id": session_id, "granted": True, "deleted_at": None}
+    ):
+        await _remember_stripe_event(
+            {
+                "event_id": event_id,
+                "session_id": session_id,
+                "user_id": "",
+                "coins": 0,
+                "granted": False,
+            }
+        )
+        return
+    metadata = _session_value(session, "metadata") or {}
+    if not isinstance(metadata, dict):
+        try:
+            metadata = dict(metadata)
+        except (TypeError, ValueError):
+            metadata = {}
+    pack = COIN_PACKS_BY_ID.get(str(metadata.get("pack_id") or ""))
+    user_id = str(metadata.get("user_id") or "")
+    record = {
+        "event_id": event_id,
+        "session_id": session_id,
+        "user_id": user_id,
+        "coins": 0,
+        "granted": False,
+    }
+    if not pack or not user_id:
+        await _remember_stripe_event(record)
+        return
+    found = await store.profiles.find_one({"user_id": user_id, "deleted_at": None})
+    if not found:
+        await _remember_stripe_event(record)
+        return
+    coins = int(pack["coins"])
+    profile = _migrate_profile(found)
+    credit_coins(profile, "web", coins)
+    await save_profile(profile)
+    record["coins"] = coins
+    record["granted"] = True
+    await _remember_stripe_event(record)
+
+
+@api.post("/store/web-checkout")
+async def web_checkout(
+    body: WebCheckoutIn,
+    request: Request,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, str]:
+    pack = COIN_PACKS_BY_ID.get(body.pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Unknown coin pack")
+    origin = browser_origin(request.headers.get("origin"))
+    suffix = "".join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(8))
+    params = {
+        "mode": "payment",
+        "success_url": f"{origin}/store?checkout=success&session_id={{CHECKOUT_SESSION_ID}}",
+        "cancel_url": f"{origin}/store?checkout=cancel",
+        "client_reference_id": str(user["user_id"]),
+        "metadata": {
+            "user_id": str(user["user_id"]),
+            "pack_id": str(pack["id"]),
+            "coins": str(int(pack["coins"])),
+        },
+        "line_items": [
+            {
+                "quantity": 1,
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": int(pack["price_cents"]),
+                    "product_data": {"name": f"{int(pack['coins'])} Coins"},
+                },
+            }
+        ],
+        "integration_identifier": f"legacy_web_coins_{suffix}",
+    }
+    return {"url": open_stripe_checkout(params)}
+
+
+@api.post("/store/stripe-webhook")
+async def stripe_webhook(request: Request) -> dict[str, bool]:
+    payload = await request.body()
+    event = verify_stripe_event(payload, request.headers.get("stripe-signature"))
+    event_id = str(event.get("id") or "")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Stripe signature could not be verified.")
+    if event.get("livemode") is True:
+        return {"received": True}
+    if str(event.get("type") or "") not in STRIPE_GRANT_EVENTS:
+        return {"received": True}
+    data = event.get("data") or {}
+    session = data.get("object") if hasattr(data, "get") else None
+    if session is None or _session_value(session, "payment_status") != "paid":
+        return {"received": True}
+    await grant_web_coins_from_session(event_id, session)
+    return {"received": True}
 
 
 app.include_router(api)

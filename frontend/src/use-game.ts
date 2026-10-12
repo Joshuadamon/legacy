@@ -373,6 +373,18 @@ export function useSupernatural() {
   });
 }
 
+export function useWebCheckout() {
+  const refresh = useInvalidateLife();
+  return useMutation({
+    mutationFn: (pack_id: string) =>
+      api<{ url: string }>("/api/store/web-checkout", {
+        method: "POST",
+        body: JSON.stringify({ pack_id }),
+      }),
+    onSuccess: refresh,
+  });
+}
+
 export function useBuyPack() {
   const refresh = useInvalidateLife();
   return useMutation({

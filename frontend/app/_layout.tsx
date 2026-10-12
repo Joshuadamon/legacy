@@ -16,6 +16,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/auth-context";
 import { ErrorBoundary } from "../src/components/error-boundary";
 import { colors } from "../src/theme";
+import { WebStage } from "../src/web-stage";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1 } },
@@ -64,9 +65,11 @@ export default function RootLayout() {
 
   if (!fontsLoaded) {
     return (
-      <View style={styles.boot}>
-        <ActivityIndicator color={colors.ember} />
-      </View>
+      <WebStage>
+        <View style={styles.boot}>
+          <ActivityIndicator color={colors.ember} />
+        </View>
+      </WebStage>
     );
   }
 
@@ -79,7 +82,9 @@ export default function RootLayout() {
               <AuthProvider>
                 <BottomSheetModalProvider>
                   <StatusBar style="light" />
-                  <Gate />
+                  <WebStage>
+                    <Gate />
+                  </WebStage>
                 </BottomSheetModalProvider>
               </AuthProvider>
             </QueryClientProvider>

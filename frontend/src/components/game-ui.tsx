@@ -1,6 +1,6 @@
 import * as Haptics from "expo-haptics";
 import { type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { fonts, makeStyles } from "../theme";
@@ -50,6 +50,10 @@ const useStyles = makeStyles((colors) => ({
     borderRadius: 8,
     paddingVertical: 14,
     paddingHorizontal: 16,
+  },
+  ghostHovered: {
+    borderColor: colors.gold,
+    backgroundColor: colors.surfaceRaised,
   },
   ghostDanger: {
     borderColor: colors.danger,
@@ -129,6 +133,7 @@ const useStyles = makeStyles((colors) => ({
 }));
 
 export async function hapticTap() {
+  if (Platform.OS === "web") return;
   try {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   } catch {
@@ -137,6 +142,7 @@ export async function hapticTap() {
 }
 
 export async function hapticSuccess() {
+  if (Platform.OS === "web") return;
   try {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   } catch {
@@ -145,6 +151,7 @@ export async function hapticSuccess() {
 }
 
 export async function hapticError() {
+  if (Platform.OS === "web") return;
   try {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
   } catch {
@@ -185,13 +192,17 @@ export function PrimaryButton({
         void hapticTap();
         onPress();
       }}
-      style={({ pressed }) => [
-        styles.button,
-        tone === "danger" ? styles.buttonDanger : null,
-        pressed && tone === "danger" ? styles.buttonDangerPressed : null,
-        pressed && tone === "ember" ? styles.buttonPressed : null,
-        disabled ? styles.disabled : null,
-      ]}
+      style={(state) => {
+        const hovered = Boolean((state as { hovered?: boolean }).hovered);
+        return [
+          styles.button,
+          tone === "danger" ? styles.buttonDanger : null,
+          (state.pressed || hovered) && tone === "danger" && !disabled ? styles.buttonDangerPressed : null,
+          (state.pressed || hovered) && tone === "ember" && !disabled ? styles.buttonPressed : null,
+          disabled ? styles.disabled : null,
+          Platform.OS === "web" && !disabled ? { cursor: "pointer" } : null,
+        ];
+      }}
     >
       <Text style={[styles.buttonText, tone === "danger" ? styles.buttonTextDanger : null]}>{label}</Text>
     </Pressable>
@@ -223,12 +234,18 @@ export function GhostButton({
         void hapticTap();
         onPress();
       }}
-      style={[
-        styles.ghost,
-        fill ? styles.fill : null,
-        tone === "danger" ? styles.ghostDanger : null,
-        disabled ? styles.disabled : null,
-      ]}
+      style={(state) => {
+        const hovered = Boolean((state as { hovered?: boolean }).hovered);
+        return [
+          styles.ghost,
+          fill ? styles.fill : null,
+          tone === "danger" ? styles.ghostDanger : null,
+          hovered && !state.pressed && !disabled && tone !== "danger" ? styles.ghostHovered : null,
+          state.pressed && !disabled ? styles.ghostHovered : null,
+          disabled ? styles.disabled : null,
+          Platform.OS === "web" && !disabled ? { cursor: "pointer" } : null,
+        ];
+      }}
     >
       <Text style={[styles.ghostText, tone === "danger" ? styles.ghostTextDanger : null]}>{label}</Text>
     </Pressable>
