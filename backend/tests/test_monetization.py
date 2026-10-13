@@ -276,3 +276,21 @@ async def test_torch_rejected_without_immortality_or_descendants(client):
     stored = await server.db.saves.find_one({"user_id": user_id, "deleted_at": None})
     assert stored["alive"] is True
     assert stored["character"]["name"] == "Ada"
+
+
+async def test_dev_grant_requires_dev_flag(client):
+    headers, user_id = await open_session(client, "session-dev-grant-no")
+    denied = await client.post("/api/dev/grant", headers=headers, json={"marks": 1000})
+    assert denied.status_code == 403
+
+
+async def test_dev_grant_adds_marks_and_coins(client):
+    headers, user_id = await open_session(client, "session-dev-grant-yes")
+    for doc in server.db.users.docs:
+        if doc.get("user_id") == user_id:
+            doc["is_dev"] = True
+    granted = await client.post("/api/dev/grant", headers=headers, json={"marks": 1000, "coins": 500})
+    assert granted.status_code == 200
+    body = granted.json()
+    assert body["marks"] == 1250  # 250 starting + 1000 granted
+    assert body["coins"] == 500

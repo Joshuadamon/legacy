@@ -3543,6 +3543,11 @@ class WebCheckoutIn(BaseModel):
     pack_id: str = Field(min_length=1, max_length=40)
 
 
+class DevGrantIn(BaseModel):
+    marks: int = Field(default=0, ge=0, le=1000000)
+    coins: int = Field(default=0, ge=0, le=1000000)
+
+
 class VerifyIn(BaseModel):
     product_id: str = Field(min_length=3, max_length=160)
     receipt: str = Field(default="", max_length=500)
@@ -3696,6 +3701,26 @@ async def auth_logout(authorization: str | None = Header(default=None), user: di
         {"$set": {"deleted_at": now()}},
     )
     return {"ok": True}
+
+
+@api.post("/dev/grant")
+async def dev_grant(body: DevGrantIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, int]:
+    """Dev-only: grant marks/coins to the caller's profile for testing purchases."""
+    if not await _user_is_dev(user["user_id"]):
+        raise HTTPException(status_code=403, detail="Dev only.")
+    store = require_db()
+    profile = await store.profiles.find_one({"user_id": user["user_id"], "deleted_at": None})
+    if not profile:
+        raise HTTPException(status_code=404, detail="No profile.")
+    marks = int(profile.get("marks") or 0) + int(body.marks)
+    wallets = coin_wallets(profile.get("coins"))
+    for platform in wallets:
+        wallets[platform] += int(body.coins)
+    await store.profiles.update_one(
+        {"user_id": user["user_id"], "deleted_at": None},
+        {"$set": {"marks": marks, "coins": wallets, "updated_at": now()}},
+    )
+    return {"marks": marks, "coins": wallets.get("web", 0)}
 
 
 @api.post("/auth/age")
