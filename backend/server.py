@@ -2793,6 +2793,7 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         {"age": age_label(int(item.get("age") or 0)), "title": item.get("title"), "choice": item.get("choice"), "outcome": item.get("outcome")}
         for item in history[-8:]
     ]
+    used_titles = [item.get("title") for item in history if item.get("title")]
     children = []
     for child in character.get("children") or []:
         if not isinstance(child, dict):
@@ -2827,6 +2828,7 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         "business": character.get("business"),
         "life_story_so_far": (character.get("life_log") or [])[-24:],
         "recent_seasons": recent,
+        "used_titles": used_titles,
     }
     return json.dumps(payload, indent=2, default=str)
 
@@ -2835,7 +2837,7 @@ SYSTEM_PROMPT = """You write three months of LEGACY, a dark, dry, store-safe lif
 Return ONLY a JSON object with this shape:
 {
   "title": "short",
-  "narrative": "2-4 sentences, second person, concrete, no purple prose",
+  "narrative": "a rich paragraph, 5-8 sentences, second person, vivid concrete detail with sensory specifics, engaging and immersive, no purple prose",
   "choices": [
     {
       "label": "what the player does",
@@ -2860,7 +2862,7 @@ Return ONLY a JSON object with this shape:
 Rules:
 - 2 to 4 choices. Each must change the life in a different direction.
 - Continuity: use the name, age, flags, children, partner, career, business, species, subtype, pack, coven, and life_story_so_far. Do not contradict them. Three months pass in this event, not a year.
-- Never repeat a title or situation from recent_seasons.
+- Never reuse a title or situation from used_titles. Every season in this lifetime must be unique — no repeats, ever, across the whole life. recent_seasons shows the last few for continuity; used_titles is the full lifetime ban list.
 - If unlocked_paths or owned_careers are present, let some seasons branch into them. Ignore empty lists.
 - When species is not human, write the season through that body.
 - Vampire: use clan, bloodlust, masquerade, and hunter_heat. Some seasons are hunger, a feeding told only as an absence and a rumor, the clan, the masquerade, or hunters when hunter_heat is high. A feeding is never a method and never a wound.
@@ -2907,7 +2909,7 @@ def parse_json_object(text: str) -> dict[str, Any] | None:
 
 
 async def llm_event(character: dict[str, Any], history: list[dict[str, Any]], owned_packs: list[str], generation: int) -> dict[str, Any] | None:
-    text = await complete_model(SYSTEM_PROMPT, build_context(character, history, owned_packs, generation), 1200)
+    text = await complete_model(SYSTEM_PROMPT, build_context(character, history, owned_packs, generation), 2000)
     if not text:
         return None
     return _sanitize_event(parse_json_object(text), character)
