@@ -5,8 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { Literata_400Regular, Literata_600SemiBold } from "@expo-google-fonts/literata";
-import { SourceSans3_400Regular, SourceSans3_600SemiBold } from "@expo-google-fonts/source-sans-3";
 import { useEffect } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -56,14 +54,16 @@ function Gate() {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
-    Literata_400Regular,
-    Literata_600SemiBold,
-    SourceSans3_400Regular,
-    SourceSans3_600SemiBold,
+  const [fontsLoaded, fontError] = useFonts({
+    Literata_400Regular: require("../assets/fonts/Literata_400Regular.ttf"),
+    Literata_600SemiBold: require("../assets/fonts/Literata_600SemiBold.ttf"),
+    SourceSans3_400Regular: require("../assets/fonts/SourceSans3_400Regular.ttf"),
+    SourceSans3_600SemiBold: require("../assets/fonts/SourceSans3_600SemiBold.ttf"),
   });
 
-  if (!fontsLoaded) {
+  // A failed font check used to leave this spinner up forever. The faces are
+  // already injected; keep booting if the browser will not confirm them.
+  if (!fontsLoaded && !fontError) {
     return (
       <WebStage>
         <View style={styles.boot}>
