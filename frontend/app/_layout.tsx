@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { Literata_400Regular, Literata_600SemiBold } from "@expo-google-fonts/literata";
+import { SourceSans3_400Regular, SourceSans3_600SemiBold } from "@expo-google-fonts/source-sans-3";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -55,29 +57,33 @@ function Gate() {
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    Literata_400Regular: require("../assets/fonts/Literata_400Regular.ttf"),
-    Literata_600SemiBold: require("../assets/fonts/Literata_600SemiBold.ttf"),
-    SourceSans3_400Regular: require("../assets/fonts/SourceSans3_400Regular.ttf"),
-    SourceSans3_600SemiBold: require("../assets/fonts/SourceSans3_600SemiBold.ttf"),
+    Literata_400Regular,
+    Literata_600SemiBold,
+    SourceSans3_400Regular,
+    SourceSans3_600SemiBold,
   });
+  // Boot must never hang on fonts. expo-font verifies web fonts with a
+  // ~12s FontObserver timeout and swallows the failure; without a backstop
+  // the boot spinner below renders forever with no error surfaced.
   const [fontTimedOut, setFontTimedOut] = useState(false);
   const loggedFontError = useRef(false);
 
   useEffect(() => {
-    if (!fontError || loggedFontError.current) return;
-    loggedFontError.current = true;
-    console.error(fontError);
-  }, [fontError]);
-
-  useEffect(() => {
     if (fontsLoaded || fontError) return;
-    const timeout = setTimeout(() => setFontTimedOut(true), 15000);
-    return () => clearTimeout(timeout);
+    const id = setTimeout(() => setFontTimedOut(true), 15000);
+    return () => clearTimeout(id);
   }, [fontsLoaded, fontError]);
 
-  // A failed font check used to leave this spinner up forever. Proceed on a
-  // font error or after 15 seconds, and log the failure once.
-  if (!fontsLoaded && !fontError && !fontTimedOut) {
+  useEffect(() => {
+    if (fontError && !loggedFontError.current) {
+      loggedFontError.current = true;
+      console.error("[LEGACY] web fonts failed to load, continuing with system fonts:", fontError);
+    }
+  }, [fontError]);
+
+  const fontsReady = fontsLoaded || fontError != null || fontTimedOut;
+
+  if (!fontsReady) {
     return (
       <WebStage>
         <View style={styles.boot}>

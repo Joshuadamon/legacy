@@ -36,40 +36,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    const timeout = setTimeout(() => {
-      cancelled = true;
-      setUser(null);
-      setStatus("null");
+    // Boot must never hang here: a storage throw (e.g. blocked site data)
+    // or a hung request would otherwise leave status "loading" forever.
+    const bootTimeout = setTimeout(() => {
+      if (!cancelled) {
+        setUser(null);
+        setStatus("null");
+      }
     }, 15000);
     (async () => {
       try {
         const token = await loadToken();
-        if (cancelled) return;
         if (!token) {
-          setStatus("null");
+          if (!cancelled) setStatus("null");
           return;
         }
-        const me = await api<{ user: User }>("/api/auth/me");
-        if (cancelled) return;
-        setUser(me.user);
-        setStatus("user");
-      } catch {
         try {
-          await setToken(null);
+          const me = await api<{ user: User }>("/api/auth/me");
+          if (cancelled) return;
+          setUser(me.user);
+          setStatus("user");
         } catch {
-          // Storage threw. The boot still has to leave the spinner.
+          await setToken(null);
+          if (!cancelled) {
+            setUser(null);
+            setStatus("null");
+          }
         }
+      } catch {
+        // Storage itself failed; boot as signed out rather than hanging.
         if (!cancelled) {
           setUser(null);
           setStatus("null");
         }
       } finally {
-        clearTimeout(timeout);
+        clearTimeout(bootTimeout);
       }
     })();
     return () => {
       cancelled = true;
-      clearTimeout(timeout);
+      clearTimeout(bootTimeout);
     };
   }, []);
 

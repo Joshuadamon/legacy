@@ -1,7 +1,5 @@
 # Deploy LEGACY on Railway
 
-Handoff steps for the live API service and the Pages web build are in `DEPLOY.md` at the repository root.
-
 Do not put secrets, connection strings, or API keys in this file or in git.
 
 1. Install the Railway CLI and log in: `railway login`
@@ -17,6 +15,6 @@ Do not put secrets, connection strings, or API keys in this file or in git.
    - `ANTHROPIC_MODEL` — optional default model name when `MODEL_NAME` is unset
    - `LEGACY_SEASON_LIMIT` — optional seasons per user per hour, default `60`
    - `LEGACY_STARTING_MARKS` — leave unset so a new profile still starts at 250 marks
-4. Deploy from `backend/` with `railway up` onto the existing `legacy-api` service.
-   Railpack starts `uvicorn main:app`. `backend/main.py` re-exports the app from `server.py`.
+4. Deploy from `backend/` with `railway up`
+   Start command: `uvicorn server:app --host 0.0.0.0 --port $PORT`
 5. Set the Expo production secret `EXPO_PUBLIC_BACKEND_URL` to the Railway host. The host is not written here.

@@ -1,20 +1,16 @@
 # LEGACY in the browser
 
-Handoff steps for the live Pages project and the Railway API are in `DEPLOY.md` at the repository root.
-
 The web build is the same game. Cloudflare Pages serves the static Expo export. The FastAPI app stays on its own host and keeps the Stripe secrets.
 
 ## Cloudflare Pages
 
-The live project `legacy` is a direct Wrangler upload of `frontend/dist`, not a Git-connected build. See `DEPLOY.md`.
-
-If a Git build is attached later:
-
-1. Production branch: `main`.
-2. Root directory: `frontend`.
-3. Build command: `npx expo export --platform web`
-4. Build output directory: `dist`
-5. Add this environment variable to the Pages project (it is inlined at build time):
+1. In the Cloudflare dashboard, open **Workers & Pages → Create → Pages → Connect to Git**.
+2. Choose the GitHub repository `https://github.com/Joshuadamon/legacy`.
+3. Production branch: `main`.
+4. Root directory: `frontend`.
+5. Build command: `npx expo export --platform web`
+6. Build output directory: `dist`
+7. Add this environment variable to the Pages project (it is inlined at build time):
    - `EXPO_PUBLIC_BACKEND_URL` — the public base URL of the existing API, with no `/api` suffix. Example shape: `https://api.example.com`
 
 Do not add `STRIPE_SECRET_KEY` or `STRIPE_WEBHOOK_SECRET` to Pages. Those stay on the API host only (`backend/.env` locally, or the API process environment). Use Stripe test mode (`sk_test_` or `rk_test_`, and a `whsec_` signing secret). This build refuses live secret keys.

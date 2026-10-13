@@ -6,8 +6,8 @@ import { colors } from "./theme";
 const keyArt = require("../assets/legacy-main-screen.jpg") as { uri?: string } | string;
 
 /**
- * Web gets the full viewport width because phone-width constraints clipped tabs and text on desktop.
- * Native path stays unwrapped.
+ * Desktop browsers keep the game in a phone-width column over the key art.
+ * A narrow viewport is already under that max width, so the column is full-bleed.
  */
 export function WebStage({ children }: { children: ReactNode }) {
   if (Platform.OS !== "web") return <>{children}</>;
@@ -47,6 +47,7 @@ const styles = StyleSheet.create({
   column: {
     flex: 1,
     width: "100%",
+    maxWidth: 430,
     backgroundColor: colors.background,
   },
 });
