@@ -191,7 +191,17 @@ def public_doc(doc: dict | None) -> dict | None:
     copied = dict(doc)
     copied.pop("_id", None)
     copied.pop("password_hash", None)
+    copied.pop("is_dev", None)  # server-side only; never exposed to clients
     return copied
+
+
+def _migrate_user(user: dict[str, Any]) -> bool:
+    """Backfill new user fields on existing records in place. Returns True if changed."""
+    changed = False
+    if "is_dev" not in user:
+        user["is_dev"] = False
+        changed = True
+    return changed
 
 
 def model_provider() -> str:
@@ -3226,11 +3236,20 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
     if not session:
         raise HTTPException(status_code=401, detail="Session expired")
     expires = session.get("expires_at")
-    if isinstance(expires, datetime) and expires < now():
-        raise HTTPException(status_code=401, detail="Session expired")
+    if isinstance(expires, datetime):
+        if expires.tzinfo is None:
+            # MongoDB returns naive UTC; pin to UTC before comparing with now().
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < now():
+            raise HTTPException(status_code=401, detail="Session expired")
     user = await store.users.find_one({"user_id": session["user_id"], "deleted_at": None})
     if not user:
         raise HTTPException(status_code=401, detail="Unknown user")
+    if _migrate_user(user):
+        await store.users.update_one(
+            {"user_id": user["user_id"], "deleted_at": None},
+            {"$set": {"is_dev": False}},
+        )
     view = public_doc(user) or {}
     if view.get("age_confirmed") is None:
         view["age_confirmed"] = False
@@ -3253,10 +3272,38 @@ def profile_payload(profile: dict[str, Any]) -> dict[str, Any]:
 
 async def save_profile(profile: dict[str, Any]) -> None:
     store = require_db()
+    payload = profile_payload(profile)
+    if profile.get("_dev_expanded"):
+        # Dev grants are in-memory only; restore the real persisted values
+        # so a later save never writes dev entitlements into the database.
+        payload["owned_packs"] = list(profile.get("_dev_real_packs") or [])
+        payload["entitlements"] = list(profile.get("_dev_real_entitlements") or [])
     await store.profiles.update_one(
         {"user_id": profile["user_id"], "deleted_at": None},
-        {"$set": profile_payload(profile)},
+        {"$set": payload},
     )
+
+
+def _apply_dev_grants(profile: dict[str, Any]) -> dict[str, Any]:
+    """Grant a dev user everything, in memory only. Never persisted."""
+    profile = dict(profile)
+    profile["_dev_real_packs"] = list(profile.get("owned_packs") or [])
+    profile["_dev_real_entitlements"] = list(profile.get("entitlements") or [])
+    owned = set(profile["_dev_real_packs"])
+    for pack in STORE_PACKS:
+        owned.add(pack["id"])
+    profile["owned_packs"] = sorted(owned)
+    entitlements = set(profile["_dev_real_entitlements"])
+    entitlements.add(IMMORTAL_ENTITLEMENT)
+    profile["entitlements"] = sorted(entitlements)
+    profile["_dev_expanded"] = True
+    return profile
+
+
+async def _user_is_dev(user_id: str) -> bool:
+    store = require_db()
+    user = await store.users.find_one({"user_id": user_id, "deleted_at": None})
+    return bool(user and user.get("is_dev"))
 
 
 async def ensure_profile(user_id: str) -> dict[str, Any]:
@@ -3265,22 +3312,28 @@ async def ensure_profile(user_id: str) -> dict[str, Any]:
     if found:
         migrated = _migrate_profile(found)
         await save_profile(migrated)
-        return migrated
-    created = _migrate_profile(
-        {
-            "user_id": user_id,
-            "marks": STARTING_MARKS,
-            "coins": 0,
-            "owned_packs": [],
-            "lives_lived": 0,
-            "entitlements": [],
-            "deleted_at": None,
-            "created_at": now(),
-            "updated_at": now(),
-        }
-    )
-    await store.profiles.insert_one(created)
-    return created
+        profile = migrated
+    else:
+        created = _migrate_profile(
+            {
+                "user_id": user_id,
+                "marks": STARTING_MARKS,
+                "coins": 0,
+                "owned_packs": [],
+                "lives_lived": 0,
+                "entitlements": [],
+                "deleted_at": None,
+                "created_at": now(),
+                "updated_at": now(),
+            }
+        )
+        await store.profiles.insert_one(created)
+        profile = created
+    # Central entitlement bypass: dev users get every pack and entitlement.
+    # Future packs are automatic because this expands from STORE_PACKS live.
+    if await _user_is_dev(user_id):
+        profile = _apply_dev_grants(profile)
+    return profile
 
 
 def profile_view(profile: dict[str, Any], platform: str | None = None) -> dict[str, Any]:
@@ -3583,6 +3636,7 @@ async def auth_register(body: RegisterIn) -> dict[str, Any]:
         "email": email,
         "password_hash": hash_password(body.password),
         "age_confirmed": bool(body.age_confirmed),
+        "is_dev": False,
         "deleted_at": None,
         "created_at": now(),
     }
