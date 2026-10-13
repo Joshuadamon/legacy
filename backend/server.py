@@ -2273,19 +2273,29 @@ def apply_work(character: dict[str, Any], picked: dict[str, Any]) -> None:
             character["work_chapter"] = "settled"
 
 
-def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
+def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> dict[str, Any]:
+    """Apply a choice's effects. Returns the deltas for display: {stats, flags, money, notes}."""
+    deltas: dict[str, Any] = {"stats": {}, "flags": {}, "money": 0, "notes": []}
     for stat, delta in (picked.get("effects") or {}).items():
         if stat not in STAT_KEYS:
             continue
         amount = clamp_delta(delta, 50_000 if stat == "money" else 40)
+        if amount == 0:
+            continue
         if stat == "money":
             character["stats"][stat] = clamp_money(int(character["stats"][stat]) + amount)
+            deltas["money"] = amount
         else:
             character["stats"][stat] = clamp(int(character["stats"][stat]) + amount)
+            deltas["stats"][stat] = amount
     for flag, delta in (picked.get("flags") or {}).items():
         if flag not in FLAG_KEYS:
             continue
-        character["flags"][flag] = clamp(int(character["flags"][flag]) + clamp_delta(delta, 40))
+        amount = clamp_delta(delta, 40)
+        if amount == 0:
+            continue
+        character["flags"][flag] = clamp(int(character["flags"][flag]) + amount)
+        deltas["flags"][flag] = amount
     apply_partner(character, picked)
     apply_work(character, picked)
     if picked.get("child_born") and quarters_of(character) >= CHILD_MIN_AGE:
@@ -2304,7 +2314,20 @@ def apply_choice(character: dict[str, Any], picked: dict[str, Any]) -> None:
             child["other_parent"] = parent["name"]
         character["children"].append(child)
         character["stats"]["family"] = clamp(int(character["stats"]["family"]) + 8)
+        deltas["stats"]["family"] = deltas["stats"].get("family", 0) + 8
+        deltas["notes"].append(f"{child_name} was born.")
     apply_species_effects(character, picked.get("species_effects"))
+    if picked.get("partner_set"):
+        deltas["notes"].append(f"Partner: {picked['partner_set'].get('name')}.")
+    if picked.get("partner_end"):
+        deltas["notes"].append("The partnership ended.")
+    if picked.get("career_start"):
+        deltas["notes"].append(f"New job: {picked['career_start'].get('title')}.")
+    if picked.get("career_leave"):
+        deltas["notes"].append("Left the job.")
+    if picked.get("business_start"):
+        deltas["notes"].append(f"Opened: {picked['business_start'].get('name')}.")
+    return deltas
 
 
 def add_bloodlust(character: dict[str, Any], amount: int) -> None:
@@ -2841,7 +2864,7 @@ Return ONLY a JSON object with this shape:
   "choices": [
     {
       "label": "what the player does",
-      "outcome": "one sentence result",
+      "outcome": "2-3 sentences describing what happens because of this choice, concrete and specific, showing consequences",
       "effects": {"health": 0, "happiness": 0, "smarts": 0, "looks": 0, "money": 0, "reputation": 0, "family": 0},
       "flags": {"morality": 0, "honesty": 0, "discipline": 0, "aggression": 0, "addiction": 0, "faith": 0, "nature": 0, "ambition": 0, "charisma": 0, "resilience": 0},
       "milestone": null,
@@ -3951,7 +3974,7 @@ async def game_choice(
     if blocked:
         raise HTTPException(status_code=403, detail=blocked)
     age_now = quarters_of(character)
-    apply_choice(character, picked)
+    deltas = apply_choice(character, picked)
     line = f"Age {age_label(age_now)}: {event_now.get('title')} — {picked.get('label')}."
     character["life_log"].append(line)
     if picked.get("milestone"):
@@ -3997,6 +4020,7 @@ async def game_choice(
         "save": client_save(save),
         "profile": profile_view(fresh_profile, x_legacy_platform),
         "marks_earned": int(save.get("marks_earned") or 0),
+        "deltas": deltas,
     }
 
 

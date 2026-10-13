@@ -315,11 +315,25 @@ export type SkipResult = {
   save: Save;
 };
 
+export type ChoiceDeltas = {
+  stats: Record<string, number>;
+  flags: Record<string, number>;
+  money: number;
+  notes: string[];
+};
+
+export type ChoiceResult = {
+  save: Save;
+  profile: Profile;
+  marks_earned: number;
+  deltas: ChoiceDeltas;
+};
+
 export function useChoice() {
   const refresh = useInvalidateLife();
   return useMutation({
     mutationFn: (choice_index: number) =>
-      api<{ save: Save; profile: Profile; marks_earned: number }>("/api/game/choice", {
+      api<ChoiceResult>("/api/game/choice", {
         method: "POST",
         body: JSON.stringify({ choice_index }),
       }),

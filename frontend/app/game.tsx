@@ -31,6 +31,7 @@ import {
   formatQuarters,
   powerSpentThisYear,
   type Circle,
+  type ChoiceDeltas,
   type Flags,
   type LycanData,
   type Save,
@@ -80,6 +81,20 @@ const useStyles = makeStyles((palette) => ({
   meta: { color: palette.textMuted, fontFamily: fonts.ui, fontSize: 14, marginTop: 4, marginBottom: 16 },
   meters: { gap: 10, marginBottom: 18 },
   outcome: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 15, marginBottom: 14 },
+  outcomeCard: {
+    backgroundColor: palette.surfaceRaised,
+    borderColor: palette.gold,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 18,
+  },
+  outcomeTitle: { color: palette.gold, fontFamily: fonts.uiMedium, fontSize: 13, letterSpacing: 1.2, marginBottom: 8 },
+  outcomeText: { color: palette.text, fontFamily: fonts.body, fontSize: 16, lineHeight: 24, marginBottom: 10 },
+  outcomeDeltas: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 4 },
+  outcomeUp: { color: "#7dcea0", fontFamily: fonts.uiMedium, fontSize: 14 },
+  outcomeDown: { color: "#e5989b", fontFamily: fonts.uiMedium, fontSize: 14 },
+  outcomeNote: { color: palette.textMuted, fontFamily: fonts.body, fontSize: 14, marginTop: 4 },
   title: { color: palette.text, fontFamily: fonts.display, fontSize: 26, marginBottom: 8 },
   narrative: { color: palette.text, fontFamily: fonts.body, fontSize: 17, lineHeight: 26, marginBottom: 18 },
   choices: { gap: 10 },
@@ -232,6 +247,49 @@ function signedChange(key: keyof Stats, value: number): string {
   return value > 0 ? `+${value}` : String(value);
 }
 
+const STAT_LABELS: Record<string, string> = {
+  health: "Health",
+  happiness: "Happiness",
+  smarts: "Smarts",
+  looks: "Looks",
+  money: "Money",
+  reputation: "Reputation",
+  family: "Family",
+};
+
+function OutcomeCard({ outcome }: { outcome: { text: string; deltas: ChoiceDeltas } }) {
+  const styles = useStyles();
+  const { deltas } = outcome;
+  const statEntries = Object.entries(deltas.stats ?? {});
+  const flagEntries = Object.entries(deltas.flags ?? {}).filter(([, v]) => v !== 0);
+  const hasChanges = statEntries.length > 0 || flagEntries.length > 0 || deltas.money !== 0;
+  return (
+    <View style={styles.outcomeCard} testID="outcome-card">
+      <Text style={styles.outcomeTitle}>WHAT HAPPENED</Text>
+      {outcome.text ? <Text style={styles.outcomeText}>{outcome.text}</Text> : null}
+      {hasChanges ? (
+        <View style={styles.outcomeDeltas}>
+          {statEntries.map(([key, value]) => (
+            <Text key={key} style={value > 0 ? styles.outcomeUp : styles.outcomeDown}>
+              {STAT_LABELS[key] ?? key} {signedChange(key as keyof Stats, value)}
+            </Text>
+          ))}
+          {deltas.money !== 0 ? (
+            <Text style={deltas.money > 0 ? styles.outcomeUp : styles.outcomeDown}>
+              {signedChange("money", deltas.money)}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {(deltas.notes ?? []).map((note, i) => (
+        <Text key={i} style={styles.outcomeNote}>
+          {note}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 export default function GameScreen() {
   const styles = useStyles();
   const router = useRouter();
@@ -253,6 +311,7 @@ export default function GameScreen() {
   const [toast, setToast] = useState<string | null>(null);
   const [seasonFailed, setSeasonFailed] = useState<string | null>(null);
   const [montage, setMontage] = useState<SkipResult | null>(null);
+  const [lastOutcome, setLastOutcome] = useState<{ text: string; deltas: ChoiceDeltas } | null>(null);
   const [partnerOpen, setPartnerOpen] = useState(false);
   const [torchOpen, setTorchOpen] = useState(false);
   const [torchId, setTorchId] = useState<string | null>(null);
@@ -317,8 +376,15 @@ export default function GameScreen() {
   async function pick(index: number) {
     setToast(null);
     setSeasonFailed(null);
+    setLastOutcome(null);
     try {
       const result = await choice.mutateAsync(index);
+      if (result.deltas) {
+        setLastOutcome({
+          text: result.save.last_outcome || "",
+          deltas: result.deltas,
+        });
+      }
       if (!result.save.alive) router.replace("/heir");
     } catch (error) {
       void hapticError();
@@ -417,7 +483,7 @@ export default function GameScreen() {
           <Meter label="Smarts" value={save.character.stats.smarts} />
           <Meter label="Looks" value={save.character.stats.looks} />
         </View>
-        {save.last_outcome ? <Text style={styles.outcome}>Last season. {save.last_outcome}</Text> : null}
+        {lastOutcome ? <OutcomeCard outcome={lastOutcome} /> : null}
         <Text style={styles.title}>{save.current_event?.title}</Text>
         <Text style={styles.narrative}>{save.current_event?.narrative}</Text>
         <Text style={styles.season} testID="live-three-months">
