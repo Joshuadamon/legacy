@@ -191,6 +191,7 @@ def public_doc(doc: dict | None) -> dict | None:
     copied = dict(doc)
     copied.pop("_id", None)
     copied.pop("password_hash", None)
+    copied.pop("is_dev", None)
     return copied
 
 
@@ -3226,8 +3227,11 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
     if not session:
         raise HTTPException(status_code=401, detail="Session expired")
     expires = session.get("expires_at")
-    if isinstance(expires, datetime) and expires < now():
-        raise HTTPException(status_code=401, detail="Session expired")
+    if isinstance(expires, datetime):
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < now():
+            raise HTTPException(status_code=401, detail="Session expired")
     user = await store.users.find_one({"user_id": session["user_id"], "deleted_at": None})
     if not user:
         raise HTTPException(status_code=401, detail="Unknown user")
@@ -3264,23 +3268,34 @@ async def ensure_profile(user_id: str) -> dict[str, Any]:
     found = await store.profiles.find_one({"user_id": user_id, "deleted_at": None})
     if found:
         migrated = _migrate_profile(found)
-        await save_profile(migrated)
-        return migrated
-    created = _migrate_profile(
-        {
-            "user_id": user_id,
-            "marks": STARTING_MARKS,
-            "coins": 0,
-            "owned_packs": [],
-            "lives_lived": 0,
-            "entitlements": [],
-            "deleted_at": None,
-            "created_at": now(),
-            "updated_at": now(),
-        }
-    )
-    await store.profiles.insert_one(created)
-    return created
+    else:
+        migrated = _migrate_profile(
+            {
+                "user_id": user_id,
+                "marks": STARTING_MARKS,
+                "coins": 0,
+                "owned_packs": [],
+                "lives_lived": 0,
+                "entitlements": [],
+                "deleted_at": None,
+                "created_at": now(),
+                "updated_at": now(),
+            }
+        )
+        await store.profiles.insert_one(migrated)
+    user = await store.users.find_one({"user_id": user_id, "deleted_at": None})
+    if user and user.get("is_dev") is True:
+        entitlements = list(migrated.get("entitlements") or [])
+        if IMMORTAL_ENTITLEMENT not in entitlements:
+            entitlements.append(IMMORTAL_ENTITLEMENT)
+        migrated["entitlements"] = entitlements
+        owned = list(migrated.get("owned_packs") or [])
+        for pack in STORE_PACKS:
+            if pack["id"] not in owned:
+                owned.append(pack["id"])
+        migrated["owned_packs"] = owned
+    await save_profile(migrated)
+    return migrated
 
 
 def profile_view(profile: dict[str, Any], platform: str | None = None) -> dict[str, Any]:
