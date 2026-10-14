@@ -4509,6 +4509,288 @@ async def grant_web_coins_from_session(event_id: str, session: Any) -> None:
     await _remember_stripe_event(record)
 
 
+    record["granted"] = True
+    await _remember_stripe_event(record)
+
+
+# ---------------------------------------------------------------------------
+# Activities: BitLife-style repeatable actions (mature LEGACY theme)
+# ---------------------------------------------------------------------------
+
+ACTIVITIES: list[dict[str, Any]] = [
+    {
+        "id": "crime",
+        "name": "Run a Job",
+        "description": "The crew, the take, the heat. Organized work for organized money.",
+        "icon": "🗡️",
+        "min_age": 16,
+        "category": "risk",
+    },
+    {
+        "id": "love",
+        "name": "Find Love",
+        "description": "Someone to hold. Someone to lose. The heart wants what it wants.",
+        "icon": "🖤",
+        "min_age": 16,
+        "category": "social",
+    },
+    {
+        "id": "gamble",
+        "name": "The Dens",
+        "description": "Underground games. The high is real. So is the fall.",
+        "icon": "🎲",
+        "min_age": 18,
+        "category": "risk",
+    },
+    {
+        "id": "doctor",
+        "name": "See a Doctor",
+        "description": "Patch the body. The mind is your problem.",
+        "icon": "⚕️",
+        "min_age": 0,
+        "category": "health",
+        "cost_money": 200,
+    },
+    {
+        "id": "mindbody",
+        "name": "Train",
+        "description": "Iron, sweat, stillness. Forge the body and the mind follows.",
+        "icon": "🔥",
+        "min_age": 12,
+        "category": "health",
+    },
+    {
+        "id": "nightlife",
+        "name": "The Scene",
+        "description": "Clubs, bars, back rooms. The night is young and so are you.",
+        "icon": "🌙",
+        "min_age": 18,
+        "category": "social",
+        "cost_money": 100,
+    },
+    {
+        "id": "shopping",
+        "name": "Shopping",
+        "description": "Markets, boutiques, back alleys. Money loves company.",
+        "icon": "🛍️",
+        "min_age": 0,
+        "category": "lifestyle",
+        "cost_money": 150,
+    },
+    {
+        "id": "pets",
+        "name": "Companions",
+        "description": "A raven, a black cat, something that watches the dark with you.",
+        "icon": "🐈‍⬛",
+        "min_age": 10,
+        "category": "lifestyle",
+        "cost_money": 300,
+    },
+    {
+        "id": "lottery",
+        "name": "Numbers",
+        "description": "The street lottery. A dollar and a dream.",
+        "icon": "🎫",
+        "min_age": 18,
+        "category": "risk",
+        "cost_money": 10,
+    },
+    {
+        "id": "lawsuit",
+        "name": "Sue",
+        "description": "The law is a weapon. Wield it or be wielded.",
+        "icon": "⚖️",
+        "min_age": 18,
+        "category": "risk",
+        "cost_money": 500,
+    },
+    {
+        "id": "loan",
+        "name": "Borrow",
+        "description": "Banks want collateral. Sharks want more.",
+        "icon": "💸",
+        "min_age": 18,
+        "category": "risk",
+    },
+    {
+        "id": "rehab",
+        "name": "Get Clean",
+        "description": "Battle the bottle, the needle, the dark. One day at a time.",
+        "icon": "🕯️",
+        "min_age": 0,
+        "category": "health",
+        "requires_addiction": True,
+        "cost_money": 1000,
+    },
+    {
+        "id": "salon",
+        "name": "Transform",
+        "description": "New face, new hair, new you. The mirror is a liar and a friend.",
+        "icon": "✂️",
+        "min_age": 14,
+        "category": "lifestyle",
+        "cost_money": 250,
+    },
+    {
+        "id": "vacation",
+        "name": "Disappear",
+        "description": "Leave it all. The road doesn't ask questions.",
+        "icon": "🧳",
+        "min_age": 16,
+        "category": "lifestyle",
+        "cost_money": 800,
+    },
+    {
+        "id": "social",
+        "name": "The Network",
+        "description": "Build a following in the dark corners of the internet.",
+        "icon": "📱",
+        "min_age": 13,
+        "category": "social",
+    },
+]
+
+ACTIVITIES_BY_ID = {a["id"]: a for a in ACTIVITIES}
+
+ACTIVITY_PROMPT = """You write a single LEGACY activity outcome — a dark, mature life-sim moment for adults.
+Return ONLY a JSON object:
+{
+  "title": "short, evocative",
+  "narrative": "a rich paragraph, 4-6 sentences, second person, vivid and specific",
+  "outcome": "2-3 sentences describing what happens, concrete consequences",
+  "effects": {"health": 0, "happiness": 0, "smarts": 0, "looks": 0, "money": 0, "reputation": 0, "family": 0},
+  "flags": {"morality": 0, "addiction": 0, "aggression": 0, "ambition": 0, "charisma": 0}
+}
+Rules:
+- The activity is: {activity_name} — {activity_description}
+- Character: {name}, age {age}, {stage}. Stats: {stats}. Flags: {flags}.
+- Write for THIS activity. A crime outcome involves the job; a love outcome involves the heart.
+- Effects are small integers (-15 to +15, money in hundreds).
+- Mature themes by consequence, never explicit. No how-to for crime or drugs.
+- Never mention game mechanics or that this is a game.
+"""
+
+
+def activity_available(activity: dict[str, Any], character: dict[str, Any]) -> tuple[bool, str | None]:
+    """Check if an activity is available. Returns (available, reason_if_not)."""
+    age_years = quarters_of(character) // QUARTERS_PER_YEAR
+    if age_years < int(activity.get("min_age") or 0):
+        return False, f"Unlocks at age {activity['min_age']}."
+    if activity.get("requires_addiction"):
+        if int((character.get("flags") or {}).get("addiction") or 0) < 20:
+            return False, "No addiction to battle."
+    cost = int(activity.get("cost_money") or 0)
+    if cost > 0 and int(character["stats"]["money"]) < cost:
+        return False, f"Needs ${cost}."
+    return True, None
+
+
+class ActivityPerformIn(BaseModel):
+    activity_id: str = Field(min_length=1, max_length=40)
+
+
+@api.get("/activities")
+async def list_activities(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    profile = await ensure_profile(user["user_id"])
+    save = await load_active_save(user["user_id"])
+    if not save:
+        raise HTTPException(status_code=404, detail="No life is open")
+    character = save["character"]
+    result = []
+    for activity in ACTIVITIES:
+        available, reason = activity_available(activity, character)
+        result.append(
+            {
+                "id": activity["id"],
+                "name": activity["name"],
+                "description": activity["description"],
+                "icon": activity["icon"],
+                "category": activity["category"],
+                "available": available,
+                "locked_reason": reason,
+                "cost_money": int(activity.get("cost_money") or 0),
+            }
+        )
+    return {"activities": result}
+
+
+@api.post("/activities/perform")
+async def perform_activity(
+    body: ActivityPerformIn,
+    user: dict[str, Any] = Depends(current_user),
+    x_legacy_platform: str | None = Header(default=None),
+) -> dict[str, Any]:
+    profile = await ensure_profile(user["user_id"])
+    save = await load_active_save(user["user_id"])
+    if not save:
+        raise HTTPException(status_code=404, detail="No life is open")
+    save = await repair_save(save, list(profile.get("owned_packs") or []))
+    if not save or not save.get("alive"):
+        raise HTTPException(status_code=409, detail="This life is already over")
+    activity = ACTIVITIES_BY_ID.get(body.activity_id)
+    if not activity:
+        raise HTTPException(status_code=404, detail="Unknown activity")
+    character = save["character"]
+    available, reason = activity_available(activity, character)
+    if not available:
+        raise HTTPException(status_code=403, detail=reason or "Not available.")
+    # Pay the cost
+    cost = int(activity.get("cost_money") or 0)
+    if cost > 0:
+        character["stats"]["money"] = clamp_money(int(character["stats"]["money"]) - cost)
+    # Generate the outcome via AI
+    age = quarters_of(character)
+    prompt = ACTIVITY_PROMPT.format(
+        activity_name=activity["name"],
+        activity_description=activity["description"],
+        name=character["name"],
+        age=age_label(age),
+        stage=character["stage"],
+        stats=json.dumps(character["stats"]),
+        flags=json.dumps(character.get("flags") or {}),
+    )
+    text = await complete_model(
+        "You write dark, mature life-sim moments. Return ONLY valid JSON.",
+        prompt,
+        800,
+    )
+    outcome_data = parse_json_object(text) if text else None
+    if not outcome_data:
+        # Fallback: generic outcome
+        outcome_data = {
+            "title": activity["name"],
+            "narrative": f"You spend time on {activity['name'].lower()}. The hours pass like smoke.",
+            "outcome": "Nothing dramatic happens, but the time was yours.",
+            "effects": {},
+            "flags": {},
+        }
+    # Apply effects using the same delta-tracking as choices
+    picked = {
+        "effects": outcome_data.get("effects") or {},
+        "flags": outcome_data.get("flags") or {},
+    }
+    deltas = apply_choice(character, picked)
+    # Log it
+    line = f"Age {age_label(age)}: {outcome_data.get('title')} — {activity['name']}."
+    character["life_log"].append(line)
+    trim_log(character["life_log"])
+    save["last_outcome"] = outcome_data.get("outcome")
+    await persist_save(save)
+    fresh_profile = await ensure_profile(user["user_id"])
+    return {
+        "save": client_save(save),
+        "profile": profile_view(fresh_profile, x_legacy_platform),
+        "activity": {
+            "id": activity["id"],
+            "name": activity["name"],
+            "title": outcome_data.get("title"),
+            "narrative": outcome_data.get("narrative"),
+            "outcome": outcome_data.get("outcome"),
+        },
+        "deltas": deltas,
+    }
+
+
 @api.post("/store/web-checkout")
 async def web_checkout(
     body: WebCheckoutIn,
