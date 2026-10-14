@@ -2784,6 +2784,7 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         {"age": age_label(int(item.get("age") or 0)), "title": item.get("title"), "choice": item.get("choice"), "outcome": item.get("outcome")}
         for item in history[-8:]
     ]
+    used_titles = [item.get("title") for item in history if isinstance(item, dict) and item.get("title")]
     children = []
     for child in character.get("children") or []:
         if not isinstance(child, dict):
@@ -2818,6 +2819,7 @@ def build_context(character: dict[str, Any], history: list[dict[str, Any]], owne
         "business": character.get("business"),
         "life_story_so_far": (character.get("life_log") or [])[-24:],
         "recent_seasons": recent,
+        "used_titles": used_titles,
     }
     return json.dumps(payload, indent=2, default=str)
 
@@ -2826,7 +2828,7 @@ SYSTEM_PROMPT = """You write three months of LEGACY, a dark, dry, store-safe lif
 Return ONLY a JSON object with this shape:
 {
   "title": "short",
-  "narrative": "2-4 sentences, second person, concrete, no purple prose",
+  "narrative": "a rich paragraph, 5-8 sentences, second person, vivid concrete detail with sensory specifics, engaging and immersive, no purple prose",
   "choices": [
     {
       "label": "what the player does",
@@ -2851,7 +2853,7 @@ Return ONLY a JSON object with this shape:
 Rules:
 - 2 to 4 choices. Each must change the life in a different direction.
 - Continuity: use the name, age, flags, children, partner, career, business, species, subtype, pack, coven, and life_story_so_far. Do not contradict them. Three months pass in this event, not a year.
-- Never repeat a title or situation from recent_seasons.
+- Never reuse a title or situation from used_titles. Every season in this lifetime must be unique — no repeats, ever, across the whole life. recent_seasons shows the last few for continuity; used_titles is the full lifetime ban list.
 - If unlocked_paths or owned_careers are present, let some seasons branch into them. Ignore empty lists.
 - When species is not human, write the season through that body.
 - Vampire: use clan, bloodlust, masquerade, and hunter_heat. Some seasons are hunger, a feeding told only as an absence and a rumor, the clan, the masquerade, or hunters when hunter_heat is high. A feeding is never a method and never a wound.
@@ -2898,7 +2900,7 @@ def parse_json_object(text: str) -> dict[str, Any] | None:
 
 
 async def llm_event(character: dict[str, Any], history: list[dict[str, Any]], owned_packs: list[str], generation: int) -> dict[str, Any] | None:
-    text = await complete_model(SYSTEM_PROMPT, build_context(character, history, owned_packs, generation), 1200)
+    text = await complete_model(SYSTEM_PROMPT, build_context(character, history, owned_packs, generation), 2000)
     if not text:
         return None
     return _sanitize_event(parse_json_object(text), character)
@@ -3218,6 +3220,40 @@ app.add_middleware(
 api = APIRouter(prefix="/api")
 
 
+def _migrate_user(user: dict[str, Any]) -> bool:
+    """Backfill is_dev on records that predate the flag. True means the document changed."""
+    if "is_dev" in user:
+        return False
+    user["is_dev"] = False
+    return True
+
+
+def _apply_dev_grants(profile: dict[str, Any]) -> dict[str, Any]:
+    """Copy packs and the immortal entitlement into memory. Never persisted."""
+    granted = dict(profile)
+    real_packs = list(profile.get("owned_packs") or [])
+    real_entitlements = list(profile.get("entitlements") or [])
+    granted["_dev_real_packs"] = real_packs
+    granted["_dev_real_entitlements"] = real_entitlements
+    owned = list(real_packs)
+    for pack in STORE_PACKS:
+        if pack["id"] not in owned:
+            owned.append(pack["id"])
+    granted["owned_packs"] = owned
+    entitlements = list(real_entitlements)
+    if IMMORTAL_ENTITLEMENT not in entitlements:
+        entitlements.append(IMMORTAL_ENTITLEMENT)
+    granted["entitlements"] = entitlements
+    granted["_dev_expanded"] = True
+    return granted
+
+
+async def _user_is_dev(user_id: str) -> bool:
+    store = require_db()
+    user = await store.users.find_one({"user_id": user_id, "deleted_at": None})
+    return bool(user and user.get("is_dev"))
+
+
 async def current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing token")
@@ -3235,6 +3271,11 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
     user = await store.users.find_one({"user_id": session["user_id"], "deleted_at": None})
     if not user:
         raise HTTPException(status_code=401, detail="Unknown user")
+    if _migrate_user(user):
+        await store.users.update_one(
+            {"user_id": user["user_id"], "deleted_at": None},
+            {"$set": {"is_dev": False}},
+        )
     view = public_doc(user) or {}
     if view.get("age_confirmed") is None:
         view["age_confirmed"] = False
@@ -3257,9 +3298,13 @@ def profile_payload(profile: dict[str, Any]) -> dict[str, Any]:
 
 async def save_profile(profile: dict[str, Any]) -> None:
     store = require_db()
+    payload = profile_payload(profile)
+    if profile.get("_dev_expanded"):
+        payload["owned_packs"] = list(profile.get("_dev_real_packs") or [])
+        payload["entitlements"] = list(profile.get("_dev_real_entitlements") or [])
     await store.profiles.update_one(
         {"user_id": profile["user_id"], "deleted_at": None},
-        {"$set": profile_payload(profile)},
+        {"$set": payload},
     )
 
 
@@ -3268,8 +3313,10 @@ async def ensure_profile(user_id: str) -> dict[str, Any]:
     found = await store.profiles.find_one({"user_id": user_id, "deleted_at": None})
     if found:
         migrated = _migrate_profile(found)
+        await save_profile(migrated)
+        profile = migrated
     else:
-        migrated = _migrate_profile(
+        profile = _migrate_profile(
             {
                 "user_id": user_id,
                 "marks": STARTING_MARKS,
@@ -3282,20 +3329,10 @@ async def ensure_profile(user_id: str) -> dict[str, Any]:
                 "updated_at": now(),
             }
         )
-        await store.profiles.insert_one(migrated)
-    user = await store.users.find_one({"user_id": user_id, "deleted_at": None})
-    if user and user.get("is_dev") is True:
-        entitlements = list(migrated.get("entitlements") or [])
-        if IMMORTAL_ENTITLEMENT not in entitlements:
-            entitlements.append(IMMORTAL_ENTITLEMENT)
-        migrated["entitlements"] = entitlements
-        owned = list(migrated.get("owned_packs") or [])
-        for pack in STORE_PACKS:
-            if pack["id"] not in owned:
-                owned.append(pack["id"])
-        migrated["owned_packs"] = owned
-    await save_profile(migrated)
-    return migrated
+        await store.profiles.insert_one(profile)
+    if await _user_is_dev(user_id):
+        return _apply_dev_grants(profile)
+    return profile
 
 
 def profile_view(profile: dict[str, Any], platform: str | None = None) -> dict[str, Any]:
@@ -3503,6 +3540,11 @@ class WebCheckoutIn(BaseModel):
     pack_id: str = Field(min_length=1, max_length=40)
 
 
+class DevGrantIn(BaseModel):
+    marks: int = Field(default=0, ge=0, le=1000000)
+    coins: int = Field(default=0, ge=0, le=1000000)
+
+
 class VerifyIn(BaseModel):
     product_id: str = Field(min_length=3, max_length=160)
     receipt: str = Field(default="", max_length=500)
@@ -3598,6 +3640,7 @@ async def auth_register(body: RegisterIn) -> dict[str, Any]:
         "email": email,
         "password_hash": hash_password(body.password),
         "age_confirmed": bool(body.age_confirmed),
+        "is_dev": False,
         "deleted_at": None,
         "created_at": now(),
     }
@@ -3655,6 +3698,26 @@ async def auth_logout(authorization: str | None = Header(default=None), user: di
         {"$set": {"deleted_at": now()}},
     )
     return {"ok": True}
+
+
+@api.post("/dev/grant")
+async def dev_grant(body: DevGrantIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, int]:
+    """Dev-only: grant marks/coins to the caller's profile for testing purchases."""
+    if not await _user_is_dev(user["user_id"]):
+        raise HTTPException(status_code=403, detail="Dev only.")
+    store = require_db()
+    profile = await store.profiles.find_one({"user_id": user["user_id"], "deleted_at": None})
+    if not profile:
+        raise HTTPException(status_code=404, detail="No profile.")
+    marks = int(profile.get("marks") or 0) + int(body.marks)
+    wallets = coin_wallets(profile.get("coins"))
+    for platform in wallets:
+        wallets[platform] += int(body.coins)
+    await store.profiles.update_one(
+        {"user_id": user["user_id"], "deleted_at": None},
+        {"$set": {"marks": marks, "coins": wallets, "updated_at": now()}},
+    )
+    return {"marks": marks, "coins": wallets.get("web", 0)}
 
 
 @api.post("/auth/age")

@@ -41,6 +41,20 @@ export default function SettingsScreen() {
     sheet.current?.present();
   }
 
+  async function handleSignOut() {
+    setBusy(true);
+    setToast(null);
+    try {
+      await signOut();
+      router.replace("/age");
+    } catch {
+      void hapticError();
+      setToast("The sign out did not finish.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeAccount() {
     setBusy(true);
     setToast(null);
@@ -67,6 +81,13 @@ export default function SettingsScreen() {
           go to anvilandember@thelittlebrownphamily.com.
         </Text>
         <Toast message={toast} />
+        <GhostButton
+          testID="sign-out-button"
+          label={busy ? "Signing out..." : "Sign out"}
+          disabled={busy}
+          onPress={() => void handleSignOut()}
+        />
+        <View style={{ height: 12 }} />
         <GhostButton testID="delete-account-button" label="Delete account" tone="danger" onPress={openDelete} />
         <View style={{ height: 12 }} />
         <GhostButton testID="settings-back-button" label="Back" onPress={() => router.back()} />

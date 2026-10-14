@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -60,10 +60,24 @@ export default function RootLayout() {
     SourceSans3_400Regular: require("../assets/fonts/SourceSans3_400Regular.ttf"),
     SourceSans3_600SemiBold: require("../assets/fonts/SourceSans3_600SemiBold.ttf"),
   });
+  const [fontTimedOut, setFontTimedOut] = useState(false);
+  const loggedFontError = useRef(false);
 
-  // A failed font check used to leave this spinner up forever. The faces are
-  // already injected; keep booting if the browser will not confirm them.
-  if (!fontsLoaded && !fontError) {
+  useEffect(() => {
+    if (!fontError || loggedFontError.current) return;
+    loggedFontError.current = true;
+    console.error(fontError);
+  }, [fontError]);
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) return;
+    const timeout = setTimeout(() => setFontTimedOut(true), 15000);
+    return () => clearTimeout(timeout);
+  }, [fontsLoaded, fontError]);
+
+  // A failed font check used to leave this spinner up forever. Proceed on a
+  // font error or after 15 seconds, and log the failure once.
+  if (!fontsLoaded && !fontError && !fontTimedOut) {
     return (
       <WebStage>
         <View style={styles.boot}>

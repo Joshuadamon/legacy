@@ -162,7 +162,7 @@ export default function StoreScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={{ flexGrow: 0 }}
+        style={{ flexGrow: 0, flexShrink: 0 }}
         contentContainerStyle={styles.chipRow}
       >
         {chips.map((chip) => {
