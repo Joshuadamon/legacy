@@ -4537,6 +4537,310 @@ async def stripe_webhook(request: Request) -> dict[str, bool]:
     return {"received": True}
 
 
+# Actions between seasons. They change the body and the purse. They do not turn the year.
+ACTIVITIES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "wager",
+        "category": "risk",
+        "name": "Take a wager",
+        "description": "Put cash on a story you cannot steer.",
+        "icon": "🎲",
+        "min_age": 18,
+        "cost_money": 50,
+        "effects": {"money": -50, "happiness": -2, "reputation": 2},
+        "title": "The wager",
+        "narrative": "The room takes your money before it takes your side. You stay long enough to be remembered.",
+        "outcome": "The stake is gone. The story is not.",
+        "too_young": "You are too young for a table like that.",
+    },
+    {
+        "id": "joyride",
+        "category": "risk",
+        "name": "Take the long way",
+        "description": "Borrow speed and give the night your name.",
+        "icon": "🚗",
+        "min_age": 16,
+        "cost_money": 0,
+        "effects": {"happiness": 4, "health": -2, "reputation": 1},
+        "title": "The long way",
+        "narrative": "The streets are empty enough to feel like permission. You come back louder than you left.",
+        "outcome": "A scrape, a grin, and a story that travels faster than the car.",
+        "too_young": "Nobody is handing you the keys yet.",
+    },
+    {
+        "id": "envelope",
+        "category": "risk",
+        "name": "Take the envelope",
+        "description": "A quiet errand that pays more than it should.",
+        "icon": "✉️",
+        "min_age": 16,
+        "cost_money": 0,
+        "effects": {"money": 180, "reputation": -3, "happiness": -2},
+        "title": "The envelope",
+        "narrative": "You do not open it. You do not ask. The cash is real and the favor is not finished.",
+        "outcome": "You are richer, and a little easier to find.",
+        "too_young": "They do not trust a child with this.",
+    },
+    {
+        "id": "dare",
+        "category": "risk",
+        "name": "Take the dare",
+        "description": "Do the thing everyone is watching you not do.",
+        "icon": "🔥",
+        "min_age": 13,
+        "cost_money": 0,
+        "effects": {"reputation": 3, "happiness": 1, "health": -1},
+        "title": "The dare",
+        "narrative": "It is a small danger with a large audience. You do it anyway, and the room decides who you are.",
+        "outcome": "You are talked about. Your body keeps the receipt.",
+        "too_young": "The crowd is not looking at you yet.",
+    },
+    {
+        "id": "call_home",
+        "category": "social",
+        "name": "Call home",
+        "description": "Use the phone before the silence gets a habit.",
+        "icon": "📞",
+        "min_age": 6,
+        "cost_money": 0,
+        "effects": {"family": 4, "happiness": 2},
+        "title": "The call",
+        "narrative": "Someone answers on the second ring. The news is ordinary, which is the point.",
+        "outcome": "The house feels closer than the miles.",
+        "too_young": "You cannot reach them on your own yet.",
+    },
+    {
+        "id": "night_out",
+        "category": "social",
+        "name": "Go out",
+        "description": "Spend the evening where other people are loud.",
+        "icon": "🌙",
+        "min_age": 16,
+        "cost_money": 35,
+        "effects": {"money": -35, "happiness": 5, "reputation": 1},
+        "title": "The night out",
+        "narrative": "You pay for a table and a few hours of not being alone. The bill is the easy part.",
+        "outcome": "You come home later, and lighter.",
+        "too_young": "That door is not open to you yet.",
+    },
+    {
+        "id": "host",
+        "category": "social",
+        "name": "Set a table",
+        "description": "Feed people so the house has a reason to be full.",
+        "icon": "🍽️",
+        "min_age": 18,
+        "cost_money": 80,
+        "effects": {"money": -80, "family": 3, "happiness": 3, "reputation": 2},
+        "title": "The table",
+        "narrative": "You buy more food than you need and leave the good chairs out. People come because you asked.",
+        "outcome": "The kitchen is wrecked. The week is warmer.",
+        "too_young": "A table like that waits until you have a house of your own.",
+    },
+    {
+        "id": "letter",
+        "category": "social",
+        "name": "Write a letter",
+        "description": "Say the thing a phone call would rush.",
+        "icon": "📝",
+        "min_age": 8,
+        "cost_money": 0,
+        "effects": {"smarts": 1, "family": 2, "happiness": 1},
+        "title": "The letter",
+        "narrative": "You write it twice and send the kinder version. It will arrive after you have already changed your mind a little.",
+        "outcome": "Someone will know you were thinking of them.",
+        "too_young": "The words are not yours to send yet.",
+    },
+    {
+        "id": "doctor",
+        "category": "health",
+        "name": "See a doctor",
+        "description": "Pay someone to look at what you have been ignoring.",
+        "icon": "🩺",
+        "min_age": 0,
+        "cost_money": 120,
+        "effects": {"money": -120, "health": 8, "happiness": -1},
+        "title": "The appointment",
+        "narrative": "The waiting room smells like paper and antiseptic. You leave with instructions and a lighter purse.",
+        "outcome": "The body gets a little of its future back.",
+        "too_young": "Not at this age.",
+    },
+    {
+        "id": "train",
+        "category": "health",
+        "name": "Train",
+        "description": "Spend the hour on purpose, until it hurts a little.",
+        "icon": "🏃",
+        "min_age": 13,
+        "cost_money": 0,
+        "effects": {"health": 4, "happiness": 1},
+        "title": "The hour",
+        "narrative": "You keep the promise you made to an empty morning. Nothing applauds. The body notices.",
+        "outcome": "You are tired in a way that feels like progress.",
+        "too_young": "Your body is not ready for that kind of work.",
+    },
+    {
+        "id": "rest",
+        "category": "health",
+        "name": "Rest",
+        "description": "Let the day end before you do.",
+        "icon": "🛌",
+        "min_age": 0,
+        "cost_money": 0,
+        "effects": {"health": 2, "happiness": 3},
+        "title": "The rest",
+        "narrative": "You stop while there is still evening left. The quiet does more than the plan did.",
+        "outcome": "You wake up slightly more yourself.",
+        "too_young": "Not at this age.",
+    },
+    {
+        "id": "indulge",
+        "category": "health",
+        "name": "Indulge",
+        "description": "Buy the thing your better judgment already priced.",
+        "icon": "🍷",
+        "min_age": 16,
+        "cost_money": 25,
+        "effects": {"money": -25, "happiness": 4, "health": -3},
+        "title": "The indulgence",
+        "narrative": "It is not a disaster. It is a decision you will feel in the morning and remember fondly anyway.",
+        "outcome": "Pleasure now. A smaller tomorrow.",
+        "too_young": "That appetite can wait.",
+    },
+    {
+        "id": "read",
+        "category": "lifestyle",
+        "name": "Read",
+        "description": "Sit with a book until the room gets smaller.",
+        "icon": "📚",
+        "min_age": 6,
+        "cost_money": 0,
+        "effects": {"smarts": 3, "happiness": 1},
+        "title": "The book",
+        "narrative": "You finish more of it than you meant to. The world outside the page has the decency to wait.",
+        "outcome": "You know one more thing, and you are glad of it.",
+        "too_young": "The pages are not yours yet.",
+    },
+    {
+        "id": "dress",
+        "category": "lifestyle",
+        "name": "Dress the part",
+        "description": "Spend money so the mirror agrees with you.",
+        "icon": "👔",
+        "min_age": 13,
+        "cost_money": 60,
+        "effects": {"money": -60, "looks": 4, "happiness": 2, "reputation": 1},
+        "title": "The clothes",
+        "narrative": "You pay for a cut that fits. People look a half-second longer, which is the whole purchase.",
+        "outcome": "You look like someone who decided to.",
+        "too_young": "Those clothes are not cut for you yet.",
+    },
+    {
+        "id": "volunteer",
+        "category": "lifestyle",
+        "name": "Show up for someone",
+        "description": "Give an afternoon you will not be paid for.",
+        "icon": "🤝",
+        "min_age": 14,
+        "cost_money": 0,
+        "effects": {"reputation": 3, "happiness": 2, "family": 1},
+        "title": "The afternoon",
+        "narrative": "You do the unglamorous part and leave before anyone makes a speech. A few people still saw you.",
+        "outcome": "Your name is a little kinder in other mouths.",
+        "too_young": "They will not put you to work yet.",
+    },
+)
+
+
+class ActivityIn(BaseModel):
+    activity_id: str = Field(min_length=1, max_length=40)
+
+
+def _activity_public(spec: dict[str, Any], character: dict[str, Any] | None) -> dict[str, Any]:
+    available = True
+    reason: str | None = None
+    if character is None:
+        available = False
+        reason = "No life is open."
+    else:
+        age = quarters_of(character) // QUARTERS_PER_YEAR
+        if age < int(spec["min_age"]):
+            available = False
+            reason = str(spec["too_young"])
+        else:
+            cost = int(spec["cost_money"])
+            money = int(character["stats"].get("money") or 0)
+            if cost > 0 and money < cost:
+                available = False
+                reason = "You cannot cover it."
+    return {
+        "id": spec["id"],
+        "category": spec["category"],
+        "name": spec["name"],
+        "description": spec["description"],
+        "icon": spec["icon"],
+        "available": available,
+        "locked_reason": reason,
+        "cost_money": int(spec["cost_money"]),
+    }
+
+
+def _activity_spec(activity_id: str) -> dict[str, Any] | None:
+    for spec in ACTIVITIES:
+        if spec["id"] == activity_id:
+            return spec
+    return None
+
+
+@api.get("/activities")
+async def list_activities(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    profile = await ensure_profile(user["user_id"])
+    save = await load_active_save(user["user_id"])
+    character = None
+    if save:
+        repaired = await repair_save(save, list(profile.get("owned_packs") or []))
+        if repaired and repaired.get("alive"):
+            character = repaired["character"]
+    return {"activities": [_activity_public(spec, character) for spec in ACTIVITIES]}
+
+
+@api.post("/activities/perform")
+async def perform_activity(body: ActivityIn, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    spec = _activity_spec(body.activity_id)
+    if spec is None:
+        raise HTTPException(status_code=400, detail="That activity is not on offer.")
+    profile = await ensure_profile(user["user_id"])
+    save = await living_save(user["user_id"], list(profile.get("owned_packs") or []))
+    character = save["character"]
+    view = _activity_public(spec, character)
+    if not view["available"]:
+        raise HTTPException(status_code=403, detail=view["locked_reason"] or "That is not available.")
+    before = {key: int(character["stats"][key]) for key in STAT_KEYS}
+    quarters = quarters_of(character)
+    apply_choice(character, {"effects": dict(spec["effects"])})
+    log = character.setdefault("life_log", [])
+    if isinstance(log, list):
+        log.append(f"Age {age_label(quarters)}: {spec['outcome']}")
+        trim_log(log)
+    await persist_save(save)
+    stats_delta = {
+        key: int(character["stats"][key]) - before[key]
+        for key in METER_STATS
+        if int(character["stats"][key]) != before[key]
+    }
+    return {
+        "activity": {
+            "title": spec["title"],
+            "narrative": spec["narrative"],
+            "outcome": spec["outcome"],
+        },
+        "deltas": {
+            "stats": stats_delta,
+            "money": int(character["stats"]["money"]) - before["money"],
+        },
+    }
+
+
 app.include_router(api)
 
 
