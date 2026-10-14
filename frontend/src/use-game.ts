@@ -439,3 +439,50 @@ export function usePassTorch() {
     onSuccess: refresh,
   });
 }
+
+export type GameActivity = {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  available: boolean;
+  locked_reason: string | null;
+  cost_money: number;
+};
+
+export type ActivityResult = {
+  save: Save;
+  profile: Profile;
+  activity: {
+    id: string;
+    name: string;
+    title: string;
+    narrative: string;
+    outcome: string;
+  };
+  deltas: ChoiceDeltas;
+};
+
+export function useActivities() {
+  return useQuery({
+    queryKey: ["activities"],
+    queryFn: () => api<{ activities: GameActivity[] }>("/api/activities"),
+  });
+}
+
+export function usePerformActivity() {
+  const refresh = useInvalidateLife();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (activity_id: string) =>
+      api<ActivityResult>("/api/activities/perform", {
+        method: "POST",
+        body: JSON.stringify({ activity_id }),
+      }),
+    onSuccess: (data) => {
+      refresh();
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
+    },
+  });
+}

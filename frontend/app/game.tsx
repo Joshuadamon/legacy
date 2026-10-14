@@ -512,6 +512,7 @@ export default function GameScreen() {
       <View style={styles.bar}>
         <GhostButton fill testID="open-life-sheet" label="Life" onPress={() => lifeRef.current?.present()} />
         <GhostButton fill testID="open-lineage-button" label="Family" onPress={() => router.push("/lineage")} />
+        <GhostButton fill testID="open-activities-button" label="Do" onPress={() => router.push("/activities")} />
         <GhostButton fill testID="open-store-button" label="Marks" onPress={() => router.push("/store")} />
         {showPowers ? (
           <GhostButton fill testID="open-powers-sheet" label="Powers" onPress={() => powersRef.current?.present()} />
