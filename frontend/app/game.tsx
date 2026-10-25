@@ -15,7 +15,7 @@ import {
   hapticTap,
   moneyLabel,
 } from "../src/components/game-ui";
-import { colors, fonts, makeStyles } from "../src/theme";
+import { colors, fonts, LifeThemeProvider, makeStyles } from "../src/theme";
 import {
   useAbandon,
   useBackgrounds,
@@ -290,7 +290,7 @@ function OutcomeCard({ outcome }: { outcome: { text: string; deltas: ChoiceDelta
   );
 }
 
-export default function GameScreen() {
+function GameScreenInner() {
   const styles = useStyles();
   const router = useRouter();
   const state = useGameState();
@@ -891,6 +891,16 @@ export default function GameScreen() {
         </BottomSheetScrollView>
       </BottomSheetModal>
     </Screen>
+  );
+}
+
+export default function GameScreen() {
+  const state = useGameState();
+  const save = state.data?.save;
+  return (
+    <LifeThemeProvider character={save?.character}>
+      <GameScreenInner />
+    </LifeThemeProvider>
   );
 }
 
